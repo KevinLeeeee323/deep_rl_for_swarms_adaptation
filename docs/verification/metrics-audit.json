@@ -1,0 +1,71 @@
+{
+  "status": "PASS",
+  "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+  "checks": [
+    {
+      "evaluation": "runs/eval-random",
+      "episodes": 20,
+      "max_return_error": 3.979039320256561e-13,
+      "status": "PASS",
+      "summary": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -238.13326094872514
+      }
+    },
+    {
+      "evaluation": "runs/eval-untrained",
+      "episodes": 20,
+      "max_return_error": 6.252776074688882e-13,
+      "status": "PASS",
+      "summary": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -234.84197736570923
+      }
+    },
+    {
+      "evaluation": "runs/eval-mappo0",
+      "episodes": 20,
+      "max_return_error": 4.547473508864641e-13,
+      "status": "PASS",
+      "summary": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -225.49342425425485
+      }
+    },
+    {
+      "evaluation": "runs/eval-mappo1",
+      "episodes": 20,
+      "max_return_error": 6.252776074688882e-13,
+      "status": "PASS",
+      "summary": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -228.6627632057195
+      }
+    },
+    {
+      "evaluation": "runs/eval-mappo2",
+      "episodes": 20,
+      "max_return_error": 4.547473508864641e-13,
+      "status": "PASS",
+      "summary": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -226.04782596485134
+      }
+    }
+  ]
+}

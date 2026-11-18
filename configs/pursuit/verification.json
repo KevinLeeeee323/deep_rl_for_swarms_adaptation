@@ -1,0 +1,31 @@
+{
+  "environment": {
+    "nr_pursuers": 10,
+    "nr_evaders": 1,
+    "obs_mode": "sum_obs_no_ori",
+    "comm_radius": 282.842712474619,
+    "world_size": 100,
+    "distance_bins": 8,
+    "bearing_bins": 8,
+    "torus": true,
+    "dynamics": "unicycle"
+  },
+  "algorithm": {
+    "hidden": 64,
+    "learning_rate": 0.0003,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip": 0.2,
+    "epochs": 5,
+    "minibatch": 256,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "rollout_steps": 1024
+  },
+  "experiment": {
+    "total_steps": 8192,
+    "eval_interval": 4096,
+    "validation_episodes": 5
+  }
+}

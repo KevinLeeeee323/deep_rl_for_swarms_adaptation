@@ -1,0 +1,53 @@
+{
+  "status": "PASS",
+  "reference_commit": "2e51997b30b49c2d288f841ba648cc1d193fe3b8",
+  "comparison": "original source and adapter, SAME modern dependency stack; historical stack NOT tested",
+  "cases": [
+    {
+      "seed": 0,
+      "mode": "random",
+      "steps": 1024,
+      "max_state_error": 0.0,
+      "max_obs_error": 2.980220681347845e-08,
+      "status": "PASS"
+    },
+    {
+      "seed": 1,
+      "mode": "random",
+      "steps": 1024,
+      "max_state_error": 0.0,
+      "max_obs_error": 2.980204549807297e-08,
+      "status": "PASS"
+    },
+    {
+      "seed": 2,
+      "mode": "random",
+      "steps": 1024,
+      "max_state_error": 0.0,
+      "max_obs_error": 2.980188540391282e-08,
+      "status": "PASS"
+    },
+    {
+      "seed": 3,
+      "mode": "zero",
+      "steps": 1024,
+      "max_state_error": 0.0,
+      "max_obs_error": 2.9798635892142045e-08,
+      "status": "PASS"
+    },
+    {
+      "seed": 4,
+      "mode": "boundary",
+      "steps": 1024,
+      "max_state_error": 0.0,
+      "max_obs_error": 2.9802068812756488e-08,
+      "status": "PASS"
+    }
+  ],
+  "provenance": {
+    "commit": "cefe68bfc7a6539a7300aabffd1b992258e730cc",
+    "branch": "codex/adapt",
+    "dirty": true,
+    "reference_commit": "2e51997b30b49c2d288f841ba648cc1d193fe3b8"
+  }
+}

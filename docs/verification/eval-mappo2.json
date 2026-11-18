@@ -1,0 +1,234 @@
+{
+  "summary": {
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -226.04782596485128
+  },
+  "episodes": [
+    {
+      "scene_id": "test-0000",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -166.22403033774287,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 23.410099853658135
+    },
+    {
+      "scene_id": "test-0001",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -202.6882527568729,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 26.92256092217104
+    },
+    {
+      "scene_id": "test-0002",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -218.79669357776848,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 29.56696599567446
+    },
+    {
+      "scene_id": "test-0003",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -263.1488037657532,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 36.675379354123336
+    },
+    {
+      "scene_id": "test-0004",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -161.36911362298468,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 24.12377606162446
+    },
+    {
+      "scene_id": "test-0005",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -204.19180129378034,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 26.44074735786657
+    },
+    {
+      "scene_id": "test-0006",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -217.67718839941074,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 30.798546118442115
+    },
+    {
+      "scene_id": "test-0007",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -205.82660606664305,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 25.760593786254407
+    },
+    {
+      "scene_id": "test-0008",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -258.09830622921845,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 35.00527492706491
+    },
+    {
+      "scene_id": "test-0009",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -257.73201583078276,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 36.584682095412106
+    },
+    {
+      "scene_id": "test-0010",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -298.22802877727713,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 42.081786822567665
+    },
+    {
+      "scene_id": "test-0011",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -192.0937037096738,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 33.30352101290039
+    },
+    {
+      "scene_id": "test-0012",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -263.55656482004025,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 35.03852698228691
+    },
+    {
+      "scene_id": "test-0013",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -242.98080152444734,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 34.17070895169852
+    },
+    {
+      "scene_id": "test-0014",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -193.81737876568732,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 28.28785694555615
+    },
+    {
+      "scene_id": "test-0015",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -168.6366778541049,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 24.029747901414808
+    },
+    {
+      "scene_id": "test-0016",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -310.23733796884403,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 41.5840459357154
+    },
+    {
+      "scene_id": "test-0017",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -209.67649833910272,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 30.918162720008738
+    },
+    {
+      "scene_id": "test-0018",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -238.29404254945732,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 31.77446625235853
+    },
+    {
+      "scene_id": "test-0019",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -247.68267310743352,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 34.14453549853913
+    }
+  ],
+  "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+  "config": {
+    "environment": {
+      "nr_pursuers": 10,
+      "nr_evaders": 1,
+      "obs_mode": "sum_obs_no_ori",
+      "comm_radius": 282.842712474619,
+      "world_size": 100,
+      "distance_bins": 8,
+      "bearing_bins": 8,
+      "torus": true,
+      "dynamics": "unicycle"
+    },
+    "algorithm": {
+      "hidden": 64,
+      "learning_rate": 0.0003,
+      "gamma": 0.99,
+      "gae_lambda": 0.95,
+      "clip": 0.2,
+      "epochs": 5,
+      "minibatch": 256,
+      "entropy_coef": 0.01,
+      "value_coef": 0.5,
+      "max_grad_norm": 0.5,
+      "rollout_steps": 1024
+    },
+    "experiment": {
+      "total_steps": 8192,
+      "eval_interval": 4096,
+      "validation_episodes": 5
+    }
+  },
+  "provenance": {
+    "source_sha256": "ddf23dd7db631805e5452471ae404d875e1bd4b14740790dd0386061f6fbd211",
+    "commit": "cefe68bfc7a6539a7300aabffd1b992258e730cc",
+    "branch": "codex/adapt",
+    "dirty": true,
+    "reference_commit": "2e51997b30b49c2d288f841ba648cc1d193fe3b8"
+  },
+  "policy": "deterministic_actor",
+  "action_seed": 200000,
+  "checkpoint": "runs/check-seed2/best.pt",
+  "checkpoint_sha256": "249b69507c34b41488ff7f13fddd4deb3e6c62d2fbd674678786fbc9a77b7b81"
+}

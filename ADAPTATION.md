@@ -1,6 +1,6 @@
 # macOS 适配与训练迁移计划
 
-状态：**待用户审核；尚未开展代码迁移、依赖安装或训练**。
+状态：**用户已于 2026-11-18 批准实施；已接入 PyTorch MAPPO，具体检查结果见 `VERIFICATION_RESULTS.md`。**
 
 记录日期：2026-11-18。
 
@@ -24,14 +24,14 @@
 | Python | 3.10.22 |
 | 架构 | 原生 `arm64` |
 | 解释器 | `/opt/anaconda3/envs/swarm-rl/bin/python` |
-| 当前安装内容 | Python、pip、setuptools、wheel 等基础工具；尚无任务运行依赖 |
+| 当前安装内容 | PyTorch 2.5.1、NumPy 1.26.4、Gym 0.23.1 等；完整版本见 `requirements-macos.lock.txt` |
 
 **结论：继续使用此环境。** 它适用于“原粒子仿真环境 + PyTorch MAPPO”的方向，不适用于原 `setup.py` 的 TensorFlow 1.15 依赖组合。单纯升级 Python 无法修复旧 TensorFlow 接口。
 
 依赖选型原则：
 
 - 使用支持 Python 3.10 / Apple Silicon 的明确版本，安装前验证解析结果与包来源，安装后锁定实际版本。
-- 优先验证 PyTorch 2.5.1、NumPy 1.26.4 和保留旧 Gym API 的 Gym 0.23.1 这类兼容组合；这些是候选，尚未安装验证。SciPy、NetworkX、Shapely、fast-histogram、Matplotlib 等需按原环境使用的 API 选定并锁定。
+- 优先验证 PyTorch 2.5.1、NumPy 1.26.4 和保留旧 Gym API 的 Gym 0.23.1 这类兼容组合；这套核心组合现已安装并通过运行检查。SciPy、NetworkX、Shapely、fast-histogram、Matplotlib 等需按原环境使用的 API 选定并锁定。
 - Gym 0.23.1 在 PyPI 提供的是源码包，需验证构建工具兼容性，不能假定全部依赖都有现成 wheel。
 - 第一阶段使用 CPU 完成正确性验证；MPS 为可选运行后端，单独验证支持情况与数值行为，不承诺加速或跨后端逐位一致。
 - 新训练流程不依赖 TensorFlow/TRPO/MPI。环境代码复用不等于旧训练程序能在新环境直接运行。
@@ -137,7 +137,7 @@ environment-macos.yml              # Conda 重建入口
 
 | 步骤 | 工作 | 交付物与通过条件 |
 | --- | --- | --- |
-| 0：审核本计划 | 用户确认范围、候选配置、验收口径 | 当前停留在这里 |
+| 0：审核本计划 | 用户确认范围、候选配置、验收口径 | 已批准；实际结果另见验收报告 |
 | 1：环境配置 | 在 `swarm-rl` 验证并安装锁定依赖，解决安装元数据问题 | 可重建的依赖文件、版本/平台记录、导入检查 |
 | 2：参考环境与最小适配 | 保存参考提交来源；明确配置；实现 wrapper、随机性和事件提取；记录必要修复 | 随机动作完整回合、数据形状/有限值检查通过 |
 | 3：任务一致性验证 | 用相同初始状态和预生成动作对照新旧环境，覆盖边界 | 按 `VERIFICATION.md` 输出差异与结论；无证据不得宣称等价 |
@@ -152,7 +152,18 @@ environment-macos.yml              # Conda 重建入口
 
 - 允许：新适配/训练/评估模块、依赖配置、必要兼容修复、可追溯日志和离线可视化。
 - 基础版本固定原奖励、逃跑策略、动作含义、周期距离、捕获条件与时间上限。奖励塑形、降速 prey、扩大观测等属于改变实验条件，需作为另行审核的实验。
-- 本轮仅新增本计划、`PRESENTATION.md`、`VERIFICATION.md`，不安装依赖、不修改 `.py` / `setup.py`，不运行训练，不自动提交 Git。
+- 初次计划阶段仅新增三份文档；用户随后批准实施。本次已经安装依赖、修改安装元数据并新增适配/训练/评估代码；Git 提交仍由用户决定。
 - 预期最终可在 macOS 上用配置驱动地训练、加载模型评估、导出第二问演示；同时能说明“改了什么、保留了什么、用什么证据验证”。迁移成功、任务一致、训练有效三种结论分别给出，不能互相替代。
 
 参见：[展示计划](PRESENTATION.md)、[验收清单](VERIFICATION.md)。
+
+## 8. 实际实现说明（2026-11-18）
+
+- 采用外层组合包装；`ma_envs/` 下源码相对参考提交保持字节不变，原 TF/TRPO 训练源码也保留。
+- 新入口显式选择参考配置；默认值大小写、direct 分支、reward_mech 递归等旧入口问题没有扩大范围重写，新流程不依赖这些接口。
+- 通过保存/恢复全局 NumPy RNG、每个 wrapper 独立 RandomState，控制原 reset 的随机性；固定初态在 World.reset 前注入，再由原方法构造派生状态。
+- 新 critic 使用 10×4+2=42 维全局特征；Actor 仍接收原 503 维观测，不截断角度负值。新观测空间元数据声明为无界，原浮点数值仅转换为 float32。
+- PPO 使用 tanh 高斯动作及对应概率变换，保留采样 latent；一个世界推进一步的计数与原环境一致。
+- 原始依赖保留为真正可读的版本清单 `requirements-legacy.txt`；新元数据与锁文件独立。
+- 验证配置 `configs/pursuit/verification.json` 只缩短训练预算与验证规模；其 environment 段与 reference 配置完全相同。
+- 限制：没有恢复历史 TensorFlow/2018 年依赖栈，没有实现 MADDPG、RNN、多进程采样或断点续训；MPS 未验收。先完成 CPU 单环境 baseline 的可复现流程。

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "random",
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -238.13326094872508,
+    "checkpoint_sha256": null,
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53"
+  },
+  {
+    "name": "untrained",
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -234.84197736570917,
+    "checkpoint_sha256": "7b09c556bea8bf9cdc9610051d7d299d345ed9fea2a7e27ed7e481b2d9e3a9aa",
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53"
+  },
+  {
+    "name": "mappo0",
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -225.49342425425485,
+    "checkpoint_sha256": "7db6a02c60a3a57d9d89506fd4d06914b12e8b17efa1255484027fd4dc0a896e",
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53"
+  },
+  {
+    "name": "mappo1",
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -228.6627632057195,
+    "checkpoint_sha256": "09ef6384ae74f3a58e1a66f73484d9a245c6d5a9292b6e2543c88b5eb7276649",
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53"
+  },
+  {
+    "name": "mappo2",
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -226.04782596485128,
+    "checkpoint_sha256": "249b69507c34b41488ff7f13fddd4deb3e6c62d2fbd674678786fbc9a77b7b81",
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53"
+  }
+]

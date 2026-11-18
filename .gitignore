@@ -108,3 +108,7 @@ venv.bak/
 
 .DS_Store
 .vscode/
+
+# Reproducible experiment outputs (keep configs and tests in Git)
+runs/
+.mpl-cache/

@@ -1,0 +1,234 @@
+{
+  "summary": {
+    "episodes": 20,
+    "success_rate": 0.0,
+    "capture_steps": null,
+    "penalized_steps": 1024.0,
+    "raw_return": -238.13326094872508
+  },
+  "episodes": [
+    {
+      "scene_id": "test-0000",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -239.59608490361597,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 29.969000073390635
+    },
+    {
+      "scene_id": "test-0001",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -211.7888015796452,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 27.908420775748702
+    },
+    {
+      "scene_id": "test-0002",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -218.52703983140614,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 36.16989269879977
+    },
+    {
+      "scene_id": "test-0003",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -270.77717470422436,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 38.026694999738886
+    },
+    {
+      "scene_id": "test-0004",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -232.5943599174965,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 40.097584389639195
+    },
+    {
+      "scene_id": "test-0005",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -211.0881423582456,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 33.770488957940806
+    },
+    {
+      "scene_id": "test-0006",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -215.0165307051214,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 31.319067894207876
+    },
+    {
+      "scene_id": "test-0007",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -227.46496554165307,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 34.960386823196
+    },
+    {
+      "scene_id": "test-0008",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -238.13333444803226,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 29.361781931454246
+    },
+    {
+      "scene_id": "test-0009",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -290.07701840766896,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 40.94731535219898
+    },
+    {
+      "scene_id": "test-0010",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -275.7225510930003,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 33.255621207585506
+    },
+    {
+      "scene_id": "test-0011",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -219.75003250331187,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 28.91488778786776
+    },
+    {
+      "scene_id": "test-0012",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -265.74528258713434,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 34.0644131363801
+    },
+    {
+      "scene_id": "test-0013",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -195.35580316534788,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 33.02347247870556
+    },
+    {
+      "scene_id": "test-0014",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -220.52726767126094,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 32.7720031673905
+    },
+    {
+      "scene_id": "test-0015",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -189.53770577977352,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 27.77863602033164
+    },
+    {
+      "scene_id": "test-0016",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -320.90296781150823,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 45.11276958985761
+    },
+    {
+      "scene_id": "test-0017",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -205.22448849661026,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 27.370872500798097
+    },
+    {
+      "scene_id": "test-0018",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -237.71726309374395,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 30.395189435101617
+    },
+    {
+      "scene_id": "test-0019",
+      "success": false,
+      "steps": 1024,
+      "raw_return": -277.11840437570163,
+      "terminated": false,
+      "truncated": true,
+      "final_min_distance": 38.508498773635075
+    }
+  ],
+  "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+  "config": {
+    "environment": {
+      "nr_pursuers": 10,
+      "nr_evaders": 1,
+      "obs_mode": "sum_obs_no_ori",
+      "comm_radius": 282.842712474619,
+      "world_size": 100,
+      "distance_bins": 8,
+      "bearing_bins": 8,
+      "torus": true,
+      "dynamics": "unicycle"
+    },
+    "algorithm": {
+      "hidden": 64,
+      "learning_rate": 0.0003,
+      "gamma": 0.99,
+      "gae_lambda": 0.95,
+      "clip": 0.2,
+      "epochs": 5,
+      "minibatch": 256,
+      "entropy_coef": 0.01,
+      "value_coef": 0.5,
+      "max_grad_norm": 0.5,
+      "rollout_steps": 1024
+    },
+    "experiment": {
+      "total_steps": 200000,
+      "eval_interval": 10000,
+      "validation_episodes": 10
+    }
+  },
+  "provenance": {
+    "source_sha256": "ddf23dd7db631805e5452471ae404d875e1bd4b14740790dd0386061f6fbd211",
+    "commit": "cefe68bfc7a6539a7300aabffd1b992258e730cc",
+    "branch": "codex/adapt",
+    "dirty": true,
+    "reference_commit": "2e51997b30b49c2d288f841ba648cc1d193fe3b8"
+  },
+  "policy": "random",
+  "action_seed": 200000,
+  "checkpoint": "None",
+  "checkpoint_sha256": null
+}
