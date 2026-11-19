@@ -142,3 +142,16 @@
 实际成绩已在 `VERIFICATION_RESULTS.md` 中依据运行记录填写；本文件的复选框保留为完整协议，不代表本次已全量验收。
 
 参见：[适配计划](ADAPTATION.md)、[展示计划](PRESENTATION.md)。
+
+
+## 11. 一键流水线验收补充（2026-11-19）
+
+- 固定evaluation20.json与历史test20初态内容一致；默认不重新生成。
+- pipeline始终训练，四种评估/可视化开关组合符合README；skip-videos保留静态图。
+- best仅使用内部验证选择，固定评估不反向更新模型；默认无未训练对照目录。
+- 模型与共享随机基线各20个分场景目录，总体results.json可独立复算。
+- 校验基线身份、环境/依赖、动作种子及轨迹哈希；并发加锁，不兼容/损坏结果不静默覆盖。
+- 渲染失败保留训练与评估，postprocess补做不重新采样；同时兼容历史平铺布局。
+- timing.json只计训练，pipeline.json/postprocess.json记录各阶段状态与耗时。
+
+本节实际执行结果独立记录在PIPELINE_VERIFICATION.md；前述历史验收不自动延伸为新流水线已通过。

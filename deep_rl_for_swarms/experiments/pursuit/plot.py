@@ -6,14 +6,15 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator, EngFormatter
 
 
-def main():
+def main(argv=None):
     p=argparse.ArgumentParser()
     p.add_argument('--runs',nargs='+',required=True)
     p.add_argument('--evaluations',nargs='*',default=[])
     p.add_argument('--output',required=True)
-    a=p.parse_args()
+    a=p.parse_args(argv)
     root=Path(a.output); root.mkdir(parents=True,exist_ok=True)
     series=[]
     for run in a.runs:
@@ -31,6 +32,8 @@ def main():
             std=values.std(0,ddof=1)
             ax.fill_between(common,mean-std,mean+std,alpha=.2,label='between-seed sample SD')
         ax.set(xlabel='Environment steps',ylabel=label)
+        ax.xaxis.set_major_locator(MaxNLocator(5))
+        ax.xaxis.set_major_formatter(EngFormatter(sep=''))
         ax.grid(alpha=.2); ax.legend(fontsize=8)
     axes[0].set_ylim(0,1)
     fig.savefig(root/'learning.png',dpi=180)

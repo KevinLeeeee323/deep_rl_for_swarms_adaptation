@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
+from .artifacts import scene_directory, trace_path, file_hash
 
 
 def broken_xy(points, size, torus):
@@ -17,22 +18,44 @@ def broken_xy(points, size, torus):
     return points
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument('--evaluation', required=True)
     p.add_argument('--index', type=int, default=0, help='Predeclared scene index, not best-of selection')
     p.add_argument('--stride', type=int, default=4)
     p.add_argument('--fps', type=int, default=15)
     p.add_argument('--video', action='store_true')
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.stride < 1 or args.fps < 1:
         p.error('stride and fps must be positive')
-    root = Path(args.evaluation)
-    results = json.loads((root/'results.json').read_text())
+    return render_scene(args.evaluation, args.index, args.stride, args.fps, args.video)
+
+
+def render_scene(evaluation, index=0, stride=4, fps=15, video=False, reuse=False):
+    args = argparse.Namespace(index=index, stride=stride, fps=fps, video=video)
+    if stride < 1 or fps < 1:
+        raise ValueError('stride and fps must be positive')
+    source = Path(evaluation)
+    results = json.loads((source/'results.json').read_text())
+    if not 0 <= index < len(results['episodes']):
+        raise ValueError('scene index out of range')
+    root = scene_directory(source, index, results)
+    metadata = root/('render.json' if results.get('layout') == 'scenes' else f'render-{index:04d}.json')
+    trace_file = trace_path(source, index, results)
     row = results['episodes'][args.index]
+    save = dict(scene_id=row['scene_id'], index=index, suite_hash=results['suite_hash'],
+                checkpoint_sha256=results['checkpoint_sha256'], stride=stride, fps=fps,
+                trace_sha256=file_hash(trace_file), policy=results.get('policy'))
+    images = [root/f'{kind}-{index:04d}.png' for kind in ('trajectory', 'distance')]
+    movie = root/f'episode-{index:04d}.mp4'
+    if reuse and metadata.exists():
+        previous = json.loads(metadata.read_text())
+        if all(previous.get(k) == v for k, v in save.items()) and all(p.exists() for p in images):
+            if not video or (previous.get('video') and movie.exists()):
+                return root
     cfg = results['config']['environment']
-    trace = np.load(root/f'trace-{args.index:04d}.npz')
-    pursuers, prey, distances = (trace[k] for k in ('pursuers','prey','distances'))
+    with np.load(trace_file) as trace:
+        pursuers, prey, distances = (trace[k] for k in ('pursuers','prey','distances'))
     size, torus = cfg['world_size'], cfg['torus']
     fig, ax = plt.subplots(figsize=(7,6))
     for i in range(pursuers.shape[1]):
@@ -75,9 +98,9 @@ def main():
                 fig.canvas.draw()
                 writer.append_data(np.asarray(fig.canvas.buffer_rgba())[:,:,:3])
                 plt.close(fig)
-    save = dict(scene_id=row['scene_id'], index=args.index, suite_hash=results['suite_hash'],
-                checkpoint_sha256=results['checkpoint_sha256'], stride=args.stride, fps=args.fps)
-    (root/f'render-{args.index:04d}.json').write_text(json.dumps(save,indent=2))
+    save['video'] = video
+    metadata.write_text(json.dumps(save,indent=2)+'\n')
+    return root
 
 
 if __name__ == '__main__':

@@ -1,0 +1,206 @@
+{
+  "tests": {
+    "passed": 34
+  },
+  "pipeline": {
+    "started_at": "2026-11-19T10:53:38+08:00",
+    "status": "completed",
+    "stages": {
+      "training": {
+        "status": "completed",
+        "started_at": "2026-11-19T10:53:38+08:00",
+        "ended_at": "2026-11-19T10:54:08+08:00",
+        "duration_seconds": 29.6046932499994
+      },
+      "model_evaluation": {
+        "status": "completed",
+        "started_at": "2026-11-19T10:54:08+08:00",
+        "ended_at": "2026-11-19T10:54:35+08:00",
+        "duration_seconds": 27.50426520899964
+      },
+      "random_baseline": {
+        "status": "completed",
+        "started_at": "2026-11-19T10:54:35+08:00",
+        "ended_at": "2026-11-19T10:54:58+08:00",
+        "duration_seconds": 22.846759874999407
+      },
+      "visualization": {
+        "status": "completed",
+        "started_at": "2026-11-19T10:54:58+08:00",
+        "ended_at": "2026-11-19T11:02:56+08:00",
+        "duration_seconds": 477.368039125
+      }
+    },
+    "evaluation": {
+      "suite": "/Users/lizhicheng/Desktop/RL\u5927\u4f5c\u4e1a/Challenge3-deep_rl_for_swarms-master/configs/pursuit/evaluation20.json",
+      "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+      "best_steps": 8,
+      "best": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -239.04658194862782
+      },
+      "random": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -238.13326094872508
+      },
+      "random_output": "/Users/lizhicheng/Desktop/RL\u5927\u4f5c\u4e1a/Challenge3-deep_rl_for_swarms-master/runs/eval_random"
+    },
+    "ended_at": "2026-11-19T11:02:56+08:00",
+    "duration_seconds": 557.3332921660003
+  },
+  "postprocess": {
+    "started_at": "2026-11-19T11:04:11+08:00",
+    "status": "completed",
+    "stages": {
+      "model_evaluation": {
+        "status": "completed",
+        "started_at": "2026-11-19T11:04:11+08:00",
+        "ended_at": "2026-11-19T11:04:11+08:00",
+        "duration_seconds": 0.010541875000853906
+      },
+      "random_baseline": {
+        "status": "completed",
+        "started_at": "2026-11-19T11:04:11+08:00",
+        "ended_at": "2026-11-19T11:04:11+08:00",
+        "duration_seconds": 0.01040229200043541
+      },
+      "visualization": {
+        "status": "completed",
+        "started_at": "2026-11-19T11:04:11+08:00",
+        "ended_at": "2026-11-19T11:04:11+08:00",
+        "duration_seconds": 0.15633933299977798
+      }
+    },
+    "evaluation": {
+      "suite": "/Users/lizhicheng/Desktop/RL\u5927\u4f5c\u4e1a/Challenge3-deep_rl_for_swarms-master/configs/pursuit/evaluation20.json",
+      "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+      "best_steps": 8,
+      "best": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -239.04658194862782
+      },
+      "random": {
+        "episodes": 20,
+        "success_rate": 0.0,
+        "capture_steps": null,
+        "penalized_steps": 1024.0,
+        "raw_return": -238.13326094872508
+      },
+      "random_output": "/Users/lizhicheng/Desktop/RL\u5927\u4f5c\u4e1a/Challenge3-deep_rl_for_swarms-master/runs/eval_random"
+    },
+    "ended_at": "2026-11-19T11:04:11+08:00",
+    "duration_seconds": 0.19222274999992806
+  },
+  "audit": {
+    "status": "PASS",
+    "suite_hash": "7dd4da741f62f2432b99f85d3e0367d08d32641f87284654f02d99cab5ae7f53",
+    "checks": [
+      {
+        "evaluation": "runs/pipeline-check/mappo-20261119-105338-seed0/eval_best",
+        "episodes": 20,
+        "max_return_error": 3.126388037344441e-13,
+        "status": "PASS",
+        "summary": {
+          "episodes": 20,
+          "success_rate": 0.0,
+          "capture_steps": null,
+          "penalized_steps": 1024.0,
+          "raw_return": -239.04658194862773
+        }
+      },
+      {
+        "evaluation": "runs/eval_random",
+        "episodes": 20,
+        "max_return_error": 3.979039320256561e-13,
+        "status": "PASS",
+        "summary": {
+          "episodes": 20,
+          "success_rate": 0.0,
+          "capture_steps": null,
+          "penalized_steps": 1024.0,
+          "raw_return": -238.13326094872514
+        }
+      }
+    ]
+  },
+  "media": {
+    "status": "PASS",
+    "scenes": 40,
+    "videos": 40,
+    "distance_images": 40,
+    "trajectory_images": 40,
+    "frame_size": [
+      640,
+      640
+    ],
+    "fps": 15,
+    "stride": 4
+  },
+  "reuse": {
+    "status": "PASS",
+    "unchanged_files": 205,
+    "duration_seconds": 0.19222274999992806
+  },
+  "skip_checks": [
+    {
+      "run": "mappo-20261119-105802-seed71",
+      "started_at": "2026-11-19T10:58:02+08:00",
+      "status": "completed",
+      "stages": {
+        "training": {
+          "status": "completed",
+          "started_at": "2026-11-19T10:58:02+08:00",
+          "ended_at": "2026-11-19T10:58:06+08:00",
+          "duration_seconds": 3.9059597499999654
+        },
+        "model_evaluation": {
+          "status": "skipped"
+        },
+        "random_baseline": {
+          "status": "skipped"
+        },
+        "visualization": {
+          "status": "completed",
+          "started_at": "2026-11-19T10:58:06+08:00",
+          "ended_at": "2026-11-19T10:58:06+08:00",
+          "duration_seconds": 0.23505254199881165
+        }
+      },
+      "ended_at": "2026-11-19T10:58:06+08:00",
+      "duration_seconds": 4.142207040998983
+    },
+    {
+      "run": "mappo-20261119-105808-seed72",
+      "started_at": "2026-11-19T10:58:08+08:00",
+      "status": "completed",
+      "stages": {
+        "training": {
+          "status": "completed",
+          "started_at": "2026-11-19T10:58:08+08:00",
+          "ended_at": "2026-11-19T10:58:12+08:00",
+          "duration_seconds": 3.665787249999994
+        },
+        "model_evaluation": {
+          "status": "skipped"
+        },
+        "random_baseline": {
+          "status": "skipped"
+        },
+        "visualization": {
+          "status": "skipped"
+        }
+      },
+      "ended_at": "2026-11-19T10:58:12+08:00",
+      "duration_seconds": 3.66726700000072
+    }
+  ]
+}

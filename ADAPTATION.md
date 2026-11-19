@@ -167,3 +167,14 @@ environment-macos.yml              # Conda 重建入口
 - 原始依赖保留为真正可读的版本清单 `requirements-legacy.txt`；新元数据与锁文件独立。
 - 验证配置 `configs/pursuit/verification.json` 只缩短训练预算与验证规模；其 environment 段与 reference 配置完全相同。
 - 限制：没有恢复历史 TensorFlow/2018 年依赖栈，没有实现 MADDPG、RNN、多进程采样或断点续训；MPS 未验收。先完成 CPU 单环境 baseline 的可复现流程。
+
+
+## 9. 一键实验流程（2026-11-19）
+
+用户已批准新增pipeline入口，训练完成后默认评估best.pt、复用共享随机对照并渲染全部场景；单独train入口继续只训练。具体命令和跳过参数以README为准。
+
+- 固定初态：`configs/pursuit/evaluation20.json` 原样取自旧 `runs/test20.json`，不重复生成；作为反复调参用的固定评估集，正式泛化测试另设未见初态。内部验证集仍独立，best选择规则不变。
+- 结果结构：本次运行下 `eval_best/results.json` 总结，`scene-XXXX/` 保存NPZ、MP4、render.json、距离与轨迹图；共享随机基线放在 `runs/eval_random/`，默认不生成eval_untrained。
+- 基线按初态、环境实现及依赖、动作种子、策略身份和轨迹哈希检查后复用，缺失视频可补渲染。环境配置变化必须换匹配的初态与基线。
+- pipeline.json记录各阶段状态和耗时；timing.json仍仅计训练。后处理失败保留模型与完整评估，可用postprocess补做；不等于训练断点续训。
+- 历史平铺结果仍由render/audit/compare支持；新evaluate默认分场景目录，flat布局可显式选择。相关验收见PIPELINE_VERIFICATION.md。

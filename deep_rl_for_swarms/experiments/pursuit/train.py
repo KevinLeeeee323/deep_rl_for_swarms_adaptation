@@ -28,7 +28,7 @@ class RunTiming:
                     status=status)
 
 
-def main():
+def main(argv=None, on_created=None):
     p = argparse.ArgumentParser()
     p.add_argument('--config', default='configs/pursuit/reference.json')
     p.add_argument('--output', required=True,
@@ -36,7 +36,7 @@ def main():
     p.add_argument('--steps', type=int)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--device', choices=['cpu','mps'], default='cpu')
-    args = p.parse_args()
+    args = p.parse_args(argv)
     config = json.loads(Path(args.config).read_text())
     if args.steps is not None:
         config['experiment']['total_steps'] = args.steps
@@ -54,6 +54,8 @@ def main():
     save_json(output/'timing.json', timing.snapshot())
     print(json.dumps(manifest), flush=True)
     try:
+        if on_created is not None:
+            on_created(output)
         torch.set_num_threads(1)
         torch.manual_seed(args.seed)
         np.random.seed(args.seed)
@@ -119,6 +121,7 @@ def main():
             path = output/name
             if path.exists():
                 update_checkpoint_timing(path, final_timing)
+    return output
 
 
 if __name__ == '__main__':

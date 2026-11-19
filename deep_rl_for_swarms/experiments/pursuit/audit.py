@@ -4,14 +4,15 @@ import json
 from pathlib import Path
 import numpy as np
 from .common import save_json, digest
+from .artifacts import trace_path
 
 
-def main():
+def main(argv=None):
     p=argparse.ArgumentParser()
     p.add_argument('--suite',required=True)
     p.add_argument('--evaluations',nargs='+',required=True)
     p.add_argument('--output',required=True)
-    a=p.parse_args()
+    a=p.parse_args(argv)
     suite=json.loads(Path(a.suite).read_text())
     checked=[]
     for location in a.evaluations:
@@ -23,7 +24,7 @@ def main():
         assert len(result['episodes'])==len(suite['scenarios'])
         successes=[]; steps=[]; returns=[]; maximum=0.
         for i,(row,scene) in enumerate(zip(result['episodes'],suite['scenarios'])):
-            trace=np.load(root/f'trace-{i:04d}.npz')
+            trace=np.load(trace_path(root,i,result))
             np.testing.assert_array_equal(trace['pursuers'][0],scene['pursuers'])
             np.testing.assert_array_equal(trace['prey'][0],scene['prey'])
             assert row['scene_id']==scene['id']

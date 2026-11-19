@@ -5,9 +5,10 @@ import subprocess
 import sys
 from pathlib import Path
 import imageio_ffmpeg
+from .artifacts import scene_directory
 
 
-def main():
+def main(argv=None):
     p=argparse.ArgumentParser()
     p.add_argument('--before',required=True)
     p.add_argument('--after',required=True)
@@ -15,7 +16,7 @@ def main():
     p.add_argument('--index',type=int,default=0)
     p.add_argument('--stride',type=int,default=8)
     p.add_argument('--fps',type=int,default=15)
-    a=p.parse_args()
+    a=p.parse_args(argv)
     if a.stride < 1 or a.fps < 1: p.error('stride and fps must be positive')
     before,after=Path(a.before),Path(a.after)
     left=json.loads((before/'results.json').read_text())
@@ -31,7 +32,8 @@ def main():
     output=Path(a.output); output.parent.mkdir(parents=True,exist_ok=True)
     duration=max((r['episodes'][a.index]['steps']+a.stride-1)//a.stride+1 for r in (left,right))/a.fps
     subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(),'-loglevel','error','-y',
-        '-i',str(before/f'episode-{a.index:04d}.mp4'),'-i',str(after/f'episode-{a.index:04d}.mp4'),
+        '-i',str(scene_directory(before,a.index,left)/f'episode-{a.index:04d}.mp4'),
+        '-i',str(scene_directory(after,a.index,right)/f'episode-{a.index:04d}.mp4'),
         '-filter_complex',f'[0:v]tpad=stop_mode=clone:stop_duration={duration}[l];[1:v]tpad=stop_mode=clone:stop_duration={duration}[r];[l][r]hstack=inputs=2',
         '-t',str(duration),
         '-c:v','libx264','-pix_fmt','yuv420p',str(output)],check=True)

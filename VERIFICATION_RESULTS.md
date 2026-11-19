@@ -1,5 +1,7 @@
 # 第二问迁移验收结果
 
+**历史记录说明（2026-11-19）：** 本文保留2026-11-18迁移验收的真实命令、目录和未训练对照。当前默认入口为pipeline，固定场景在configs/pursuit/evaluation20.json，共享随机基线在runs/eval_random，新布局按场景分目录；新检查见[PIPELINE_VERIFICATION.md](PIPELINE_VERIFICATION.md)。
+
 日期：2026-11-18；分支：`codex/adapt`。本次实现尚未自动提交 Git，基于用户文档提交 `cefe68b` 的工作区修改。原始环境参考提交为 `2e51997b30b49c2d288f841ba648cc1d193fe3b8`。
 
 ## 结论

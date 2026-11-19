@@ -26,60 +26,125 @@ MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.verify
 
 第二条命令从 Git 固定参考提交导出原环境到临时目录，用独立进程运行，再与适配层在同一现代依赖栈对照。它不证明历史依赖栈数值完全等价。
 
-## 训练
+## 一键训练、固定评估与可视化
+
+在项目根目录激活 `swarm-rl` 后运行：
 
 ```bash
-MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.train   --config configs/pursuit/reference.json --output runs --seed 0
+MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.pipeline \
+  --config configs/pursuit/reference.json --output runs --seed 0
 ```
 
-默认 200000 环境步；可用 `--steps 2048` 做短检查。`--output` 现在指定父目录，程序自动新建 `mappo-YYYYMMDD-HHMMSS-seedN` 子目录，例如 `runs/mappo-20261119-090000-seed0/`。时间来自 `time.time()`，按运行机器本地时间格式化到秒；启动时输出实际目录。父目录可以存在，但同秒、同 seed 的同名运行目录不得已存在，避免覆盖。以后接入其他算法时沿用同一命名方式、替换算法前缀；当前入口仅实现 MAPPO。CPU 是已验证后端，`--device mps` 需单独检查，本分支不承诺逐位可复现或加速。
+默认依次执行：**从头训练 → 评估本次 best.pt → 创建或复用共享随机基线 → 绘制图表并导出全部20个场景的视频**。最后打印 `summary.md` 的位置。不会自动评估 `untrained.pt`。
 
-每个 rollout 记录一个共享团队回报与全部追捕者动作，Actor 共享，Critic 使用归一化位置/朝向全局状态。连续动作采用 tanh 高斯策略，保留 latent 和 Jacobian 修正后的 log probability。真捕获不 bootstrap，超时 bootstrap 且 GAE 不跨 reset。训练不修改原奖励。
+默认训练200000环境步；`--steps 2048` 可做短检查。只有训练入口的 `--output` 表示父目录，会自动新建 `mappo-YYYYMMDD-HHMMSS-seedN`。目录时间戳来自运行机器本地开始时间，精确到秒；同秒同种子的同名目录存在时拒绝覆盖。`--seed` 是训练种子，不改变固定评估初态或默认随机对照动作。
 
-每个运行子目录包括 `config.json`、`manifest.json`、固定 `validation.json`、`metrics.jsonl`、`history.json`、`timing.json`、`untrained.pt`、`best.pt` 和 `latest.pt`。时间戳只加在运行目录上，模型文件名保持固定。`best.pt` 从已训练 checkpoint 按验证成功率、失败按 1024 计入的用时、原始回报依次选择；测试集不参与选择。当前入口从头训练，尚无断点续训参数。
+| 参数 | 行为 |
+| --- | --- |
+| 不加跳过参数 | 训练、评估、随机对照、图表及全部视频 |
+| `--skip-visualization` | 训练与评估，保存JSON和NPZ；不生成图片或视频 |
+| `--skip-evaluation` | 训练并绘制学习曲线；不进行固定集评估、随机对照和场景渲染 |
+| 两个跳过参数同时使用 | 只训练 |
+| `--skip-videos` | 保留评估、轨迹和静态图表，跳过视频编码 |
 
-`timing.json`、manifest 和每个 checkpoint 的 `timing` 字段保存整次运行的起止时间（带本地时区偏移）、持续秒数和状态（`running` / `completed` / `interrupted` / `failed`）。checkpoint 另保留 `checkpoint_saved_at` 和 `checkpoint_elapsed_seconds`，区分模型产生时刻与整次运行结束时刻；结束回填只更新元数据，不替换模型参数和步数。正常退出、Python 异常及 Ctrl+C 会回填，强制终止或断电无法保证。总计时从运行目录命名开始，包含初始化、基线验证、采样、更新、周期验证和常规保存，不含最终计时元数据回填。日志 `elapsed` 在每次 `model.update()` 刚完成时记录累计耗时，因此不含当轮随后执行的验证和保存，但包含之前轮次的验证和保存；初始行记录基线验证完成时的实际累计耗时。
+`--device cpu` 默认已验收；`--device mps` 仍需单独检查，不承诺加速或逐位复现。`--stride 4 --fps 15` 控制视频采样和播放；视频编码增加耗时，日常调参可使用 `--skip-videos`。支持 `--suite`、`--random-output`、`--action-seed` 指定其他评估协议；必须保证各对照使用同一组初态。
 
-## 独立测试与随机对照
+## 固定评估集与共享随机对照
 
-先生成一份固定测试集。训练内部验证 seed 为 100000，测试默认 seed 为 200000：
+`configs/pursuit/evaluation20.json` 原样固定了旧 `runs/test20.json` 的20个初始场景（生成种子200000）。每次读取具体位置和朝向，不重新抽样。文件名是新的，JSON中的历史 `split: test` 与场景ID保留，以保持内容哈希一致。它现在是反复比较、调参用的**固定评估集**；正式泛化成绩应另用未参与调参的冻结测试集。
+
+训练内部验证初态仍由种子100000生成，`best.pt` 仅按验证成功率、失败按1024计入的平均用时、原始回报依次选择，固定评估结果不参与自动选模型。评估使用确定性Actor，不更新参数。
+
+共享随机基线默认保存到项目根目录的 `runs/eval_random/`，动作是 `RandomState(200000).uniform(-1, 1, (num_agents, 2))`。第一次需要时自动评估一次，之后校验场景集、环境配置/实现及依赖版本、动作种子、策略身份和轨迹哈希后复用。仅修改算法超参数或训练种子不要求重跑随机基线。改变环境、场景集、动作种子或相关环境依赖时，指定新的 `--random-output`；已有不兼容或损坏的结果会报错，不会静默复用或覆盖。
+
+同一基线由目录锁保护，并发使用时会明确报忙，可稍后补做后处理；强制杀进程可能遗留 `.eval_random.lock`，应确认没有任务使用后再处理。随机评估数据完整生成后才发布；后续缺视频只补渲染，改变stride/fps也只重新渲染。一次固定动作序列是可复现参考，不是随机策略期望性能的精确估计。
+
+## 结果保存在哪里，先看什么
+
+```text
+runs/
+├── eval_random/
+│   ├── results.json
+│   ├── scene-0000/
+│   │   ├── trace-0000.npz
+│   │   ├── episode-0000.mp4
+│   │   ├── render.json
+│   │   ├── distance-0000.png
+│   │   └── trajectory-0000.png
+│   └── ...共20个场景目录
+└── mappo-YYYYMMDD-HHMMSS-seedN/
+    ├── config.json / manifest.json / validation.json
+    ├── metrics.jsonl / history.json / timing.json
+    ├── untrained.pt / best.pt / latest.pt
+    ├── eval_best/
+    │   ├── results.json
+    │   └── scene-XXXX/       # 与随机基线相同的逐场景结构
+    ├── figures/
+    │   ├── learning.png
+    │   ├── evaluation.png
+    │   ├── table.json
+    │   └── plot-manifest.json
+    ├── summary.md
+    └── pipeline.json
+```
+
+跳过步骤时对应产物不生成。建议先打开 **summary.md**，再看 `figures/learning.png`，最后选择场景目录里的视频和距离曲线。左侧学习曲线为验证捕获率，右侧为验证原始回报；回报越高越好，但回报改善不等于捕获成功。`evaluation.png` 比较固定集捕获率，详细回报见summary或table.json。
+
+`results.json` 包含总体summary、逐场景episodes、场景哈希、配置、模型哈希、策略类型、环境实现标识及代码来源。报告成功率、成功条件平均捕获步数（无成功为null/N/A）、失败按1024计入的平均用时和一份共享奖励累计的原始回报。`done` 不等于成功。
+
+轨迹在周期边界断线；视频标明场景、步数、距离和捕获/超时，不挑选最好案例。严格捕获阈值 `<1`，最多1024环境步。参考配置是10追捕者、1脚本prey、100×100周期场地、unicycle动力学，通信半径 `200*sqrt(2)`、观测半径为其一半；不能将其称为小范围感知实验。
+
+## 只训练，或给已有模型补做后处理
+
+原训练入口继续可用，它只训练，不自动评估/渲染：
 
 ```bash
-python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --generate 100 --split test
-python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --checkpoint runs/mappo-20261119-090000-seed0/best.pt   --output runs/test-mappo0 --trajectories
-python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --random --output runs/test-random
+MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.train \
+  --config configs/pursuit/reference.json --output runs --seed 0
 ```
 
-将上述示例运行目录替换为训练时打印的实际目录。评估、绘图等入口的 `--output` 仍表示精确输出位置，只有训练入口自动新建运行子目录。同一测试集可评估其他种子 checkpoint 和 `untrained.pt`。最终测试完成后不根据其结果挑选模型。结果位于 `results.json`；有轨迹时另存 `trace-XXXX.npz`。每个结果附场景集哈希、配置、checkpoint 哈希和代码来源。只加载可信的本地模型文件。
-
-原演示配置：10 个追捕者、1 个脚本 prey、100×100 周期场地、unicycle 动力学，通信半径 `200*sqrt(2)`、观测半径为其一半。范围很大，不能省略后称为局部观测实验。具体值见配置文件。
-
-评价沿用原始共享距离奖励；严格捕获阈值 `<1`，最多 1024 环境步。报告成功率、成功条件下平均捕获步数（无成功为 null / N/A）、失败按 1024 计入的平均用时及一份共享奖励累计的原始回报。`done` 不等于成功。
-
-## 可视化
+已有训练目录可以直接补做，**不会重新训练**：
 
 ```bash
-python -m deep_rl_for_swarms.experiments.pursuit.render   --evaluation runs/test-mappo0 --index 0 --video
-python -m deep_rl_for_swarms.experiments.pursuit.plot   --runs runs/mappo-20261119-090000-seed0 --evaluations runs/test-mappo0 runs/test-random   --output runs/figures
+MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.postprocess \
+  --run runs/mappo-20261119-084855-seed0
 ```
 
-导出轨迹图、距离曲线、MP4 及元数据。轨迹在周期边界断线，动画标明步数、距离和捕获/超时；`--index` 是显式场景编号，不自动挑选最佳案例。多个训练目录传给 `--runs` 可绘制对齐预算的跨种子均值和标准差带；单种子不画虚假的方差。
+postprocess支持与pipeline相同的评估/可视化开关。若原先跳过视频，之后不带 `--skip-videos` 运行就会补视频；重复运行会验证并复用已有轨迹和匹配的渲染产物，不重新评估。已有eval_best与当前best不匹配时拒绝覆盖，应保留旧结果并明确处理后再运行。
+
+`timing.json` 仍只记录训练起止时间、持续秒数和状态。每个checkpoint保存运行计时，并通过 `checkpoint_saved_at`、`checkpoint_elapsed_seconds` 区分模型保存时刻与训练结束时刻；不改变模型参数和步数。日志elapsed记录在每次更新完成、该轮验证和保存之前，包含之前轮次的耗时。
+
+`pipeline.json` 分别记录训练、模型评估、随机基线和可视化状态及耗时；补做后处理另记 `postprocess.json`，保留原流水线记录。后处理失败不会删除已完成模型或评估，summary会显示失败阶段。正常异常和Ctrl+C会记录状态；强制终止、断电无法保证。当前仍不支持训练断点续训，postprocess的补做只针对评估和渲染。
+
+## 单独调用评估、渲染与指标复算
+
+这些命令是可选的分步入口。评估输出目录必须不存在，`--output` 是精确位置，不自动添加时间戳。只加载可信的本地checkpoint。
+
+```bash
+python -m deep_rl_for_swarms.experiments.pursuit.evaluate \
+  --suite configs/pursuit/evaluation20.json \
+  --checkpoint runs/mappo-20261119-084855-seed0/best.pt \
+  --output runs/manual-evaluation --trajectories
+python -m deep_rl_for_swarms.experiments.pursuit.render \
+  --evaluation runs/manual-evaluation --index 0 --video
+python -m deep_rl_for_swarms.experiments.pursuit.audit \
+  --suite configs/pursuit/evaluation20.json --evaluations runs/manual-evaluation \
+  --output runs/manual-audit.json
+```
+
+新评估默认按 `scene-XXXX/` 分目录；`--layout flat` 可导出旧布局。render、audit、compare同时兼容没有layout字段的历史平铺结果和新布局。`--index` 是明确的场景编号。并排比较随机与模型的同一初态：
+
+```bash
+python -m deep_rl_for_swarms.experiments.pursuit.compare \
+  --before runs/eval_random \
+  --after runs/mappo-20261119-084855-seed0/eval_best \
+  --index 0 --output runs/comparison.mp4
+```
+
+较短一侧保持终帧；编码使用imageio-ffmpeg自带FFmpeg。多个训练目录可传给plot的 `--runs`，按共同预算绘制均值和训练种子间样本标准差；单种子不画虚假方差。
 
 ## 证据与限制
 
-[适配记录](ADAPTATION.md)、[展示计划](PRESENTATION.md)、[验收清单](VERIFICATION.md)、[实际验收结果](VERIFICATION_RESULTS.md)。运行输出在 `runs/`，默认不加入 Git。原构造器中失效的默认值和未使用的动力学分支未重写，新入口只接受此次支持的显式配置。原 prey 对精确中线位置及退化几何有已知风险，参考与新环境均保留其行为，发生异常会报错而不静默重抽场景。
+[适配记录](ADAPTATION.md)、[展示计划](PRESENTATION.md)、[验收清单](VERIFICATION.md)、[历史验收结果](VERIFICATION_RESULTS.md)。2026-11-18验收中的旧目录、未训练对照和分步命令是历史记录，不代表当前默认流程。新流水线检查记录见 [PIPELINE_VERIFICATION.md](PIPELINE_VERIFICATION.md)。运行输出在 `runs/`，默认不加入Git；固定评估初态作为配置纳入版本管理。
 
-
-复算指标（需要对应的 `--trajectories` 评估输出）：
-
-```bash
-python -m deep_rl_for_swarms.experiments.pursuit.audit --suite runs/test100.json --evaluations runs/test-mappo0 --output runs/metric-audit.json
-```
-
-同初态并排视频（左 before、右 after；较短的一侧保持终帧，避免隐藏提前结束）：
-
-```bash
-python -m deep_rl_for_swarms.experiments.pursuit.compare --before runs/test-untrained --after runs/test-mappo0 --index 0 --output runs/comparison.mp4
-```
-
-先用同一测试集和 `untrained.pt` 生成 `runs/test-untrained`，并在两次评估时均加 `--trajectories`。视频编码使用 `imageio-ffmpeg` 自带 FFmpeg，无需系统 FFmpeg 含 `libx264`。
+原构造器中失效的默认值和未使用的动力学分支未重写，新入口只接受此次支持的显式配置。原prey对精确中线位置及退化几何有已知风险，发生异常会报错，不静默重抽场景。新流程不改变环境规则、奖励或MAPPO更新。
