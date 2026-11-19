@@ -82,10 +82,21 @@ def evaluate(config, suite, model=None, policy='model', seed=0, trajectories=Fal
     return summarize(rows), rows, traces
 
 
-def checkpoint(path, model, config, steps, seed, validation_hash):
-    torch.save(dict(model=model.state_dict(), optimizer=model.optimizer.state_dict(),
-                    config=config, steps=steps, seed=seed, validation_hash=validation_hash,
-                    provenance=provenance()), path)
+def checkpoint(path, model, config, steps, seed, validation_hash, timing=None):
+    saved = dict(model=model.state_dict(), optimizer=model.optimizer.state_dict(),
+                 config=config, steps=steps, seed=seed, validation_hash=validation_hash,
+                 provenance=provenance())
+    if timing is not None:
+        saved['timing'] = dict(timing, checkpoint_saved_at=timing['recorded_at'],
+                               checkpoint_elapsed_seconds=timing['duration_seconds'])
+    torch.save(saved, path)
+
+
+def update_checkpoint_timing(path, timing):
+    """Add run-end metadata, keeping this checkpoint's parameters and step count."""
+    saved = torch.load(path, map_location='cpu', weights_only=False)
+    saved['timing'].update(timing)
+    torch.save(saved, path)
 
 
 def load_model(path, device='cpu'):

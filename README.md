@@ -29,14 +29,16 @@ MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.verify
 ## 训练
 
 ```bash
-MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.train   --config configs/pursuit/reference.json --output runs/mappo-seed0 --seed 0
+MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.train   --config configs/pursuit/reference.json --output runs --seed 0
 ```
 
-默认 200000 环境步；可用 `--steps 2048` 做短检查。输出目录必须尚不存在，防止覆盖旧实验。CPU 是已验证后端，`--device mps` 需单独检查，本分支不承诺逐位可复现或加速。
+默认 200000 环境步；可用 `--steps 2048` 做短检查。`--output` 现在指定父目录，程序自动新建 `mappo-YYYYMMDD-HHMMSS-seedN` 子目录，例如 `runs/mappo-20261119-090000-seed0/`。时间来自 `time.time()`，按运行机器本地时间格式化到秒；启动时输出实际目录。父目录可以存在，但同秒、同 seed 的同名运行目录不得已存在，避免覆盖。以后接入其他算法时沿用同一命名方式、替换算法前缀；当前入口仅实现 MAPPO。CPU 是已验证后端，`--device mps` 需单独检查，本分支不承诺逐位可复现或加速。
 
 每个 rollout 记录一个共享团队回报与全部追捕者动作，Actor 共享，Critic 使用归一化位置/朝向全局状态。连续动作采用 tanh 高斯策略，保留 latent 和 Jacobian 修正后的 log probability。真捕获不 bootstrap，超时 bootstrap 且 GAE 不跨 reset。训练不修改原奖励。
 
-输出包括 `config.json`、`manifest.json`、固定 `validation.json`、`metrics.jsonl`、`history.json`、`untrained.pt`、`best.pt` 和 `latest.pt`。`best.pt` 从已训练 checkpoint 按验证成功率、失败按 1024 计入的用时、原始回报依次选择；测试集不参与选择。当前入口从头训练，尚无断点续训参数。
+每个运行子目录包括 `config.json`、`manifest.json`、固定 `validation.json`、`metrics.jsonl`、`history.json`、`timing.json`、`untrained.pt`、`best.pt` 和 `latest.pt`。时间戳只加在运行目录上，模型文件名保持固定。`best.pt` 从已训练 checkpoint 按验证成功率、失败按 1024 计入的用时、原始回报依次选择；测试集不参与选择。当前入口从头训练，尚无断点续训参数。
+
+`timing.json`、manifest 和每个 checkpoint 的 `timing` 字段保存整次运行的起止时间（带本地时区偏移）、持续秒数和状态（`running` / `completed` / `interrupted` / `failed`）。checkpoint 另保留 `checkpoint_saved_at` 和 `checkpoint_elapsed_seconds`，区分模型产生时刻与整次运行结束时刻；结束回填只更新元数据，不替换模型参数和步数。正常退出、Python 异常及 Ctrl+C 会回填，强制终止或断电无法保证。总计时从运行目录命名开始，包含初始化、基线验证、采样、更新、周期验证和常规保存，不含最终计时元数据回填。日志 `elapsed` 在每次 `model.update()` 刚完成时记录累计耗时，因此不含当轮随后执行的验证和保存，但包含之前轮次的验证和保存；初始行记录基线验证完成时的实际累计耗时。
 
 ## 独立测试与随机对照
 
@@ -44,11 +46,11 @@ MPLBACKEND=Agg python -m deep_rl_for_swarms.experiments.pursuit.train   --config
 
 ```bash
 python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --generate 100 --split test
-python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --checkpoint runs/mappo-seed0/best.pt   --output runs/test-mappo0 --trajectories
+python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --checkpoint runs/mappo-20261119-090000-seed0/best.pt   --output runs/test-mappo0 --trajectories
 python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100.json --random --output runs/test-random
 ```
 
-同一测试集可评估其他种子 checkpoint 和 `untrained.pt`。最终测试完成后不根据其结果挑选模型。结果位于 `results.json`；有轨迹时另存 `trace-XXXX.npz`。每个结果附场景集哈希、配置、checkpoint 哈希和代码来源。只加载可信的本地模型文件。
+将上述示例运行目录替换为训练时打印的实际目录。评估、绘图等入口的 `--output` 仍表示精确输出位置，只有训练入口自动新建运行子目录。同一测试集可评估其他种子 checkpoint 和 `untrained.pt`。最终测试完成后不根据其结果挑选模型。结果位于 `results.json`；有轨迹时另存 `trace-XXXX.npz`。每个结果附场景集哈希、配置、checkpoint 哈希和代码来源。只加载可信的本地模型文件。
 
 原演示配置：10 个追捕者、1 个脚本 prey、100×100 周期场地、unicycle 动力学，通信半径 `200*sqrt(2)`、观测半径为其一半。范围很大，不能省略后称为局部观测实验。具体值见配置文件。
 
@@ -58,7 +60,7 @@ python -m deep_rl_for_swarms.experiments.pursuit.evaluate   --suite runs/test100
 
 ```bash
 python -m deep_rl_for_swarms.experiments.pursuit.render   --evaluation runs/test-mappo0 --index 0 --video
-python -m deep_rl_for_swarms.experiments.pursuit.plot   --runs runs/mappo-seed0 --evaluations runs/test-mappo0 runs/test-random   --output runs/figures
+python -m deep_rl_for_swarms.experiments.pursuit.plot   --runs runs/mappo-20261119-090000-seed0 --evaluations runs/test-mappo0 runs/test-random   --output runs/figures
 ```
 
 导出轨迹图、距离曲线、MP4 及元数据。轨迹在周期边界断线，动画标明步数、距离和捕获/超时；`--index` 是显式场景编号，不自动挑选最佳案例。多个训练目录传给 `--runs` 可绘制对齐预算的跨种子均值和标准差带；单种子不画虚假的方差。
