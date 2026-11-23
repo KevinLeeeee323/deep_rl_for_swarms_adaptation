@@ -24,6 +24,7 @@ except:
 
 class PursuitEvasionEnv(gym.Env, EzPickle):
     metadata = {'render.modes': ['human', 'animate']}
+    capture_radius = 1.0
 
     def __init__(self,
                  nr_pursuers=5,
@@ -101,7 +102,7 @@ class PursuitEvasionEnv(gym.Env, EzPickle):
             return True
         return False
 
-    def reset(self):
+    def reset(self, initial_state=None):
         self.timestep = 0
         # self.ax = None
 
@@ -117,12 +118,18 @@ class PursuitEvasionEnv(gym.Env, EzPickle):
         self.obs_comm_matrix = self.obs_radius * np.ones([self.nr_agents + 1, self.nr_agents + 1])
         self.obs_comm_matrix[0:-self.nr_evaders, 0:-self.nr_evaders] = self.comm_radius
 
-        pursuers = np.random.rand(self.nr_agents, 3)
-        pursuers[:, 0:2] = self.world_size * ((0.95 - 0.05) * pursuers[:, 0:2] + 0.05)
-        pursuers[:, 2:3] = 2 * np.pi * pursuers[:, 2:3]
-
-        evader = (0.95 - 0.05) * np.random.rand(self.nr_evaders, 2) + 0.05
-        evader = self.world_size * evader
+        if initial_state is None:
+            pursuers = np.random.rand(self.nr_agents, 3)
+            pursuers[:, 0:2] = self.world_size * ((0.95 - 0.05) * pursuers[:, 0:2] + 0.05)
+            pursuers[:, 2:3] = 2 * np.pi * pursuers[:, 2:3]
+            evader = self.world_size * ((0.95 - 0.05) * np.random.rand(self.nr_evaders, 2) + 0.05)
+        else:
+            pursuers = np.array(initial_state['pursuer_states'], dtype=float, copy=True)
+            evader = np.array(initial_state['evader_states'], dtype=float, copy=True)
+            if pursuers.shape != (self.nr_agents, 3) or evader.shape != (self.nr_evaders, 2):
+                raise ValueError('Initial state has incompatible pursuer or evader dimensions.')
+            if not np.all(np.isfinite(pursuers)) or not np.all(np.isfinite(evader)):
+                raise ValueError('Initial states must contain finite numbers.')
 
         self.world.agent_states = pursuers
         self.world.landmark_states = evader
@@ -197,7 +204,7 @@ class PursuitEvasionEnv(gym.Env, EzPickle):
         rewards = self.get_reward(actions)
 
         done = self.is_terminal
-        if rewards[0] > -1 / self.obs_radius:  # distance of 1 in world coordinates, scaled by the reward scaling factor
+        if rewards[0] > -self.capture_radius / self.obs_radius:
             done = True
         # if done and self.timestep < self.timestep_limit:
         #     rewards = 100 * np.ones((self.nr_agents,))

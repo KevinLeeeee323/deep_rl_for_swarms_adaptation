@@ -2,7 +2,7 @@ import zipfile
 import cloudpickle
 import tempfile
 import os
-from common import logger
+from deep_rl_for_swarms.common import logger
 import numpy as np
 import tensorflow as tf
 

@@ -10,6 +10,7 @@ setup(
     author='Maximilian Huettenrauch',
     author_email='',
     description='',
+    extras_require={'mappo-test': ['imageio-ffmpeg==0.4.9']},
     install_requires=['absl-py == 0.2.2',
                       'astor == 0.7.1',
                       'bleach == 3.1.4',

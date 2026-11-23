@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import datetime
+import os
+import tempfile
 import numpy as np
 from mpi4py import MPI
 from deep_rl_for_swarms.common import logger
@@ -41,7 +43,7 @@ def train(num_timesteps, log_dir):
 def main():
     env_id = "Rendezvous-v0"
     dstr = datetime.datetime.now().strftime('%Y%m%d_%H%M_%S')
-    log_dir = '/tmp/baselines/trpo_test/rendezvous/' + dstr
+    log_dir = os.path.join(tempfile.gettempdir(), 'baselines', 'trpo_test', 'rendezvous', dstr)
     train(num_timesteps=1e7, log_dir=log_dir)
 
 

@@ -1,4 +1,3 @@
-from deep_rl_for_swarms.common.mpi_running_mean_std import RunningMeanStd
 import deep_rl_for_swarms.common.tf_util as U
 from deep_rl_for_swarms.policies import mean_embedding as me
 import numpy as np
@@ -17,7 +16,8 @@ class MlpPolicy(object):
             self._init(*args, **kwargs)
             self.scope = tf.get_variable_scope().name
 
-    def _init(self, ob_space, ac_space, hid_size, feat_size, gaussian_fixed_var=True):
+    def _init(self, ob_space, ac_space, hid_size, feat_size, gaussian_fixed_var=True,
+              observation_input=None):
 
         num_hid_layers = len(hid_size)
         mean_emb = ob_space.dim_mean_embs
@@ -30,7 +30,9 @@ class MlpPolicy(object):
         self.pdtype = pdtype = make_pdtype(ac_space)
         # a row in ob contains an agent's flattened observation, the first dimension needs to be None because we use it
         # for training and inference, i.e.[None, (n_agents - 1) * dim_rec_obs + dim_flat_obs]
-        ob = U.get_placeholder(name="ob", dtype=tf.float32, shape=(None,) + ob_space.shape)
+        ob = observation_input
+        if ob is None:
+            ob = U.get_placeholder(name="ob", dtype=tf.float32, shape=(None,) + ob_space.shape)
 
         flat_obs_input_layer = tf.slice(ob, [0, 0], [-1, nr_rec_obs * dim_rec_obs])  # grab only the part that goes into mean embedding
         flat_feature_input_layer = tf.slice(ob, [0, nr_rec_obs * dim_rec_obs], [-1, dim_flat_obs])  # grab only the local observation
