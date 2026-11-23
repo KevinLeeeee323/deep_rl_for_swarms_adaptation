@@ -90,11 +90,16 @@ def _save_checkpoint(saver, session, checkpoint_dir, step, selection,
 def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
           minibatch_steps=64, epochs=5, gamma=0.99, lam=0.98,
           clip=0.2, learning_rate=3e-4, entropy_coef=0.01,
-          eval_env=None, eval_interval=50_000, eval_episodes=20, eval_seed=10_000):
+          eval_env=None, eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
+          resume_checkpoint=None, initial_timesteps=0):
     if eval_env is None or eval_env is env:
         raise ValueError('Evaluation requires a separate environment.')
     if eval_interval < 1 or eval_episodes < 1:
         raise ValueError('Evaluation interval and episode count must be positive.')
+    if num_timesteps < 1 or initial_timesteps < 0:
+        raise ValueError('Additional timesteps must be positive and initial timesteps nonnegative.')
+    if initial_timesteps and resume_checkpoint is None:
+        raise ValueError('Initial timesteps require a checkpoint to restore.')
     start_time = time.perf_counter()
     observations = env.reset()
     obs_input = tf.placeholder(tf.float32, (None,) + env.observation_space.shape, name='observations')
@@ -128,12 +133,26 @@ def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
     update = optimizer.apply_gradients(zip(gradients, trainable))
     saver = tf.train.Saver(max_to_keep=None, save_relative_paths=True)
     session.run(tf.global_variables_initializer())
+    if resume_checkpoint is not None:
+        # Restore the centralized critic and Adam slots as well as the actor.
+        saver.restore(session, resume_checkpoint)
 
     episode_return = 0.0
     episode_length = 0
     best_return = -np.inf
     next_eval_step = eval_interval
     selection = {}
+    if resume_checkpoint is not None:
+        # Retain a local baseline so a worse continuation cannot replace the
+        # restored model as best. Source checkpoints are never modified.
+        best_return, _ = _evaluate(eval_env, session, obs_input, action_mode,
+                                   eval_episodes, eval_seed)
+        if not np.isfinite(best_return):
+            raise ValueError('Restored checkpoint evaluation returned a non-finite mean reward.')
+        _save_checkpoint(saver, session, checkpoint_dir, initial_timesteps, selection,
+                         True, False, best_return, eval_episodes, eval_seed)
+        logger.log('Restored step {}: baseline evaluation return {}'.format(
+            initial_timesteps, best_return))
     for start in range(0, num_timesteps, rollout_steps):
         count = min(rollout_steps, num_timesteps - start)
         rollout = []
@@ -179,7 +198,8 @@ def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
                      targets: returns[batch]})
                 losses.append((actor_loss, critic_loss, batch_entropy))
         actor_loss, critic_loss, mean_entropy = np.mean(losses, axis=0)
-        logger.record_tabular('TimestepsSoFar', start + count)
+        logger.record_tabular('TimestepsSoFar', initial_timesteps + start + count)
+        logger.record_tabular('TimestepsThisRun', start + count)
         logger.record_tabular('EpisodesThisIter', len(completed_returns))
         logger.record_tabular('EpRewMean', np.mean(completed_returns) if completed_returns else np.nan)
         logger.record_tabular('EpLenMean', np.mean(completed_lengths) if completed_lengths else np.nan)
@@ -197,7 +217,7 @@ def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
                 raise ValueError('Evaluation returned a non-finite mean reward.')
             is_best = eval_mean_return > best_return
             if is_best or is_final:
-                _save_checkpoint(saver, session, checkpoint_dir, step, selection,
+                _save_checkpoint(saver, session, checkpoint_dir, initial_timesteps + step, selection,
                                  is_best, is_final, eval_mean_return,
                                  eval_episodes, eval_seed)
             if is_best:

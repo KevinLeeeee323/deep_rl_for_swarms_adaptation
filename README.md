@@ -60,7 +60,7 @@ mpirun -np 4 python run_multiagent_trpo.py
 From the repository root, use the existing TensorFlow 1 environment.
 
 ```sh
-python -m deep_rl_for_swarms.run_multiagent_mappo
+.\.venv\python.exe -m deep_rl_for_swarms.run_multiagent_mappo
 ```
 
 MAPPO trains the continuous-control `PursuitEvasionEnv`, using its example
@@ -166,5 +166,54 @@ at 20 fps. Adjust these with `--animation-stride` and `--animation-fps`.
 For a short smoke run:
 
 ```sh
-python -m deep_rl_for_swarms.run_multiagent_mappo --num-timesteps 16 --rollout-steps 8 --minibatch-steps 4 --epochs 1 --eval-interval 8 --eval-episodes 1 --no-test --log-dir runs
+.\.venv\python.exe -m deep_rl_for_swarms.run_multiagent_mappo --num-timesteps 16 --rollout-steps 8 --minibatch-steps 4 --epochs 1 --eval-interval 8 --eval-episodes 1 --no-test --log-dir runs
+```
+
+### 续训与独立测试
+
+辅助入口统一放在 `deep_rl_for_swarms/mappo_tools.py`，提供 `resume` 和 `test` 两个子命令。
+在仓库根目录运行：
+
+```powershell
+# 从 40 万步模型追加 60 万环境步，最终累计 100 万步
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools resume runs\20261123_105105_337779_400000steps\400000 --additional-timesteps 600000 --note "从40万步模型继续训练60万步"
+
+# 单独测试 40 万步模型
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps\400000
+
+# 也可以传运行目录，用 best/final 选择模型；默认 final
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps --model best
+```
+
+`resume` 默认继承来源 `config.json` 的环境、训练参数、种子和训练后测试设置，
+恢复 actor、集中式 critic 和 Adam 的动量等状态，所有原有可训练参数继续更新。
+如需改变超参数，可以显式传入 `--learning-rate`、`--entropy-coef`、`--gamma`、
+`--lam`、`--clip`、`--epochs` 等；使用 `--no-test` 可跳过续训后的自动测试。
+`--help` 列出全部可覆盖选项。当前工具要求模型结构和环境运行参数与现有实现兼容。
+
+续训创建独立的 `<时间戳>_<追加步数>steps/`，默认放在来源 run 的同级目录，
+可用 `--log-dir` 指定新的父目录。旧训练日志和模型不被覆盖。
+新配置中的 `num_timesteps` 表示本次追加步数；`continuation` 记录来源 run/config/模型、
+来源累计步数、追加步数、目标累计步数、备注、参数覆盖及多次续训的 `history`。
+例如从 400000 步追加 600000 步，`source_step=400000`、`additional_timesteps=600000`、
+`target_total_timesteps=1000000`。日志 `TimestepsSoFar` 和模型文件夹使用累计步数，
+`TimestepsThisRun` 使用本次新增步数。评估间隔按本次新增步数计数。
+
+续训会重新评估起点模型，在新 run 中保留一个本地 best 基线；后续模型表现更好时才替换它。
+不复制其他未选中的来源模型。环境、NumPy 和 TensorFlow 随机流重新开始；
+旧检查点未保存采样器与回合状态，因此这不是逐位复现原训练轨迹的断点恢复。
+
+独立 `test` 支持步数文件夹、`model` 前缀、`.index`/`.meta` 文件或 run 文件夹，
+输出为来源 run 的 `test/<模型累计步数>/`，例如 `test/400000/`。
+沿用已有的 5 个固定测试场景、确定性动作以及距离 CSV/PNG、MP4 和汇总 JSON/CSV。
+即使按 `--model best` 选择，也使用实际步数命名输出；原训练入口的自动测试仍使用 `test/best/`
+或 `test/final/`。已有同名测试目录会报错，保留之前的结果；重新测试前需先移动该目录。
+可用 `--test-scenarios`、`--test-seed`、`--animation-fps` 和 `--animation-stride` 覆盖测试设置。
+旧运行被移动后，工具会尝试使用运行目录内已复制的测试场景。
+Windows 下辅助命令会临时补充旧 SciPy wheel 的 DLL 搜索目录，不修改依赖安装。
+
+检查续训恢复、Adam 状态、累计步数、配置继承和历史链：
+
+```powershell
+.\.venv\python.exe -m unittest discover -s tests -p test_mappo_tools.py
 ```

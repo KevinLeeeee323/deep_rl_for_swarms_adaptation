@@ -54,7 +54,8 @@ def run_tests(env, session, policy, run_dir, selection, suite, model='best', fps
     run_dir = Path(run_dir)
     checkpoint = selection[model]
     prefix = run_dir / checkpoint['path']
-    tf.train.Saver().restore(session, str(prefix))
+    # A standalone test graph needs only policy variables, not training/Adam ops.
+    tf.train.Saver(var_list=policy.get_variables()).restore(session, str(prefix))
     output_dir = run_dir / 'test' / model
     output_dir.mkdir(parents=True, exist_ok=False)
     with (output_dir / 'scenarios.json').open('w') as output:
@@ -118,6 +119,7 @@ def run_tests(env, session, policy, run_dir, selection, suite, model='best', fps
         writer.writeheader()
         writer.writerows(reports)
     summary = {'model': model, 'checkpoint': checkpoint, 'episodes': len(reports),
+               'actions': 'policy_mean', 'fps': fps, 'frame_stride': frame_stride,
                'success_count': sum(report['captured'] for report in reports),
                'success_rate': float(np.mean([report['captured'] for report in reports])),
                'mean_episode_return': float(np.mean([report['episode_return'] for report in reports])),

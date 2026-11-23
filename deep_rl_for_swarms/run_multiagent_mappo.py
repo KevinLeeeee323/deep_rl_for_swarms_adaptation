@@ -12,7 +12,7 @@ import numpy as np
 def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64, epochs=5,
           eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
           test=True, test_seed=20_000, test_scenarios=None, test_model='best',
-          animation_fps=20, animation_stride=4):
+          animation_fps=20, animation_stride=4, resume=None):
     import tensorflow as tf
     from deep_rl_for_swarms.common import logger
     from deep_rl_for_swarms.common import tf_util as U
@@ -27,6 +27,8 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                         comm_radius=200 * np.sqrt(2), world_size=100,
                         distance_bins=8, bearing_bins=8, torus=True,
                         dynamics='unicycle')
+    if resume is not None:
+        env_settings = resume['config']['environment_settings'].copy()
     env = PursuitEvasionEnv(**env_settings)
     eval_env = None
     try:
@@ -44,11 +46,14 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         algorithm_settings = {
             name: parameter.default
             for name, parameter in inspect.signature(mappo.learn).parameters.items()
-            if parameter.default is not inspect.Parameter.empty and name != 'eval_env'
+            if parameter.default is not inspect.Parameter.empty
+            and name not in ('eval_env', 'resume_checkpoint', 'initial_timesteps')
         }
         algorithm_settings.update(rollout_steps=rollout_steps, minibatch_steps=minibatch_steps,
                                   epochs=epochs, eval_interval=eval_interval,
                                   eval_episodes=eval_episodes, eval_seed=eval_seed)
+        if resume is not None:
+            algorithm_settings.update(resume['training'])
         config = {
             'algorithm': 'MAPPO', 'environment': 'PursuitEvasionEnv',
             'started_at': datetime.datetime.now().astimezone().isoformat(),
@@ -89,17 +94,21 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                         'tensorflow': tf.__version__, 'processes': 1,
                         'tensorflow_intra_op_threads': 1, 'tensorflow_inter_op_threads': 1},
         }
-        with open(os.path.join(log_dir, 'config.json'), 'w') as output:
+        if resume is not None:
+            from deep_rl_for_swarms.mappo_tools import validate_environment
+            validate_environment(resume['config'], env)
+            config['continuation'] = resume['continuation']
+        with open(os.path.join(log_dir, 'config.json'), 'w', encoding='utf-8') as output:
             json.dump(config, output, indent=2, allow_nan=False)
         with tf.Graph().as_default(), U.single_threaded_session() as session:
             tf.set_random_seed(seed)
             with logger.scoped_configure(dir=log_dir, format_strs=['stdout', 'csv']):
                 policy = mappo.learn(
                     env, session, num_timesteps, logger.get_dir(),
-                    rollout_steps=rollout_steps,
-                    minibatch_steps=minibatch_steps, epochs=epochs,
-                    eval_env=eval_env, eval_interval=eval_interval,
-                    eval_episodes=eval_episodes, eval_seed=eval_seed)
+                    eval_env=eval_env,
+                    resume_checkpoint=resume['checkpoint'] if resume is not None else None,
+                    initial_timesteps=resume['step'] if resume is not None else 0,
+                    **algorithm_settings)
                 if test:
                     with open(os.path.join(log_dir, 'checkpoints.json')) as source:
                         selection = json.load(source)
@@ -107,6 +116,7 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                                         model=test_model, fps=animation_fps,
                                         frame_stride=animation_stride)
                     logger.log('Test success rate {:.1%}'.format(summary['success_rate']))
+        return os.path.abspath(log_dir)
     finally:
         env.close()
         if eval_env is not None:
