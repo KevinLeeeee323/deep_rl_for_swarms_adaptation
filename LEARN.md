@@ -15,7 +15,9 @@
 | `ElapsedSeconds` | 进入训练函数后的累计耗时，包含建图、采样、更新、eval 和模型保存 | 约 `5.22`、`9.38` 秒。训练后的 test 和动画耗时另记在测试的 `summary.json` 中 |
 
 
-
+# Lines of Code
+1. `session.run`: tensorflow中的计算. 区分静态图 vs 动态计算. 这一步不涉及对环境的改变
+2. `env.step()`: 真正把actions送进环境去交互, 算出来next_obs, rewards等
 
 
 
