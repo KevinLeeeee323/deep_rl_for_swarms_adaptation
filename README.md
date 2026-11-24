@@ -7,12 +7,13 @@ https://github.com/openai/multiagent-particle-envs/
 
 ## 项目结构与用途
 
-本项目用于多智能体连续控制实验，包含智能体聚集（Rendezvous）和追逃（Pursuit-Evasion）环境。当前 TRPO 入口默认运行聚集任务，可通过匹配环境和观测策略接入追逃任务。MAPPO 入口运行追逃任务，集成定期评估、best/final 模型保存和训练后的固定场景测试。
+本项目用于多智能体连续控制实验，包含智能体聚集（Rendezvous）和追逃（Pursuit-Evasion）环境。当前 TRPO 入口默认运行聚集任务。MAPPO 入口运行追逃任务，集成固定 20 场景监控、周期模型保存和训练后的 200 场景批量筛选。
 
 ```text
 deep_rl_for_swarms/
   run_multiagent_trpo.py           # TRPO 训练入口，默认 Rendezvous
   run_multiagent_mappo.py          # MAPPO 训练入口，默认 Pursuit-Evasion
+  mappo_tools.py                   # 续训、单模型测试和 test-all 批量筛选
   rl_algo/
     trpo_mpi/                     # 支持 MPI 多进程的 TRPO 算法
     mappo.py                      # MAPPO 训练、集中式 critic 和模型筛选
@@ -22,15 +23,16 @@ deep_rl_for_swarms/
     envs/point_envs/              # 聚集、单 prey 追逃和多 prey 追逃环境
     agents/point_agents/          # 智能体观测、动作及 prey 的逃逸策略
   common/                         # 日志、概率分布、模型读写等工具
-    mappo_test.py                 # 固定测试场景、成功率和距离统计
+    mappo_evaluation.py           # 可复用场景、无渲染评测、指标与排名
+    mappo_test.py                 # 可选的五场景轨迹导出
     mappo_visualization.py        # MP4 动画及距离曲线导出
-test_scenarios/                   # 可复用的 5 个固定测试场景及其初始状态
+test_scenarios/                   # 可复用的验证/演示场景及其初始状态
 runs/                             # 每次训练的配置、日志、模型和测试结果
 setup.py                          # Python 包与依赖配置
 .venv/                            # 本地 Python 运行环境
 ```
 
-MAPPO 从训练入口创建追逃环境，经 `rl_algo/mappo.py` 完成训练和评估，再由 `common/mappo_test.py` 加载选定模型进行测试。`test_scenarios/` 中的场景跨训练复用，每次训练的输出保存在 `runs/<时间戳>_<总步数>steps/` 中。
+MAPPO 经 `rl_algo/mappo.py` 完成训练和监控，再由 `mappo_tools.test_all_checkpoints` 复评全部保留模型。场景跨模型复用，每次训练的输出保存在 `runs/<时间戳>_<本次新增步数>steps/` 中。
 
 ## Installation
 ```
@@ -95,38 +97,47 @@ are excluded from the training budget. Elapsed time includes evaluation.
 
 The selection score is the mean episode return, computed by summing the mean
 agent reward over each full episode. Higher scores select a new best model.
-`EvalMeanReturn` and `EvalStdReturn` are logged on evaluation rows in
-`progress.csv`, with `nan` on other rows. `BestEvalReturn` tracks the best score.
+`EvalMeanReturn`, `EvalStdReturn`, `EvalSuccessRate`, `EvalMeanMinimumDistance`
+and `EvalMeanFinalDistance` are logged on evaluation rows in `progress.csv`,
+with `nan` on other rows. `BestEvalReturn` tracks the best monitor return.
 These scores measure performance on the fixed evaluation scenarios.
 
-Checkpoints are saved only for a new best model and the final model. Each saved
-model has its own `<training-step>/` directory containing the `model` prefix.
-The run's `checkpoints.json` identifies the best and final prefixes relative
-to the run directory, together with their evaluation scores. Superseded best
-checkpoints are removed after their replacements are saved. If the final model
-also achieves the best score, both entries point to the same step directory.
+Every `--checkpoint-interval` new environment steps (default 50,000), keep a
+checkpoint at the next update boundary. Always save the final step, including
+a partial last interval; a coincident periodic/final checkpoint is saved once.
+Monitor improvements and resumed baselines are also retained. Old models are
+never deleted. Saving and monitoring have independent intervals.
+Each model has its own `<cumulative-training-step>/` directory with the `model`
+prefix. `checkpoints.json` lists all new saves in `checkpoints`; `best` remains
+the highest 20-scenario monitor return, `final` is the last step, and `selected`
+points to the leader of the latest completed post-training validation ranking.
 
 A TensorFlow 1 checkpoint consists of `.data-00000-of-00001` (variable values),
 `.index` (variable index), and `.meta` (graph) files sharing the same prefix.
 The `checkpoint` text file tracks the latest saved prefix. Pass the prefix
 returned by `tf.train.latest_checkpoint(step_dir)` to `Saver.restore`.
 
-### Post-training tests and animation
+### Post-training validation and optional animation
 
-After training, the best checkpoint is restored and tested on five fixed
-scenarios, each for one episode of at most 1024 steps. Use `--test-model final`
-to test the final checkpoint or `--no-test` to skip testing and animation.
-Tests use deterministic policy mean actions. Default test seeds 20,000–20,004
-are separate from evaluation seeds 10,000–10,019. A test seed range overlapping
-the evaluation range is rejected.
+By default, training invokes `test-all`: evaluate every physically saved model
+on the same 200 scenarios, each for at most 1024 steps, using policy mean actions.
+Use `--no-test` to skip this step without changing monitoring or checkpoint saving.
+Default validation seeds 30,000–30,199 are separate from monitor seeds
+10,000–10,019 and the legacy five demonstration seeds 20,000–20,004.
+Use `--test-episodes`, `--test-seed`, or `--test-scenarios` to choose another
+shared suite. A validation seed range overlapping monitoring is rejected.
 
 The scenario seeds, initial pursuer positions and headings, and evader positions
-are saved before training to `test_scenarios/pursuit_<settings-hash>_seed20000.json`.
+are saved before training to `test_scenarios/pursuit_<settings-hash>_seed30000_200episodes.json`.
 Future runs with the same settings reuse those states. Use `--test-scenarios`
 to choose another JSON path and `--test-seed` to choose a different fixed set.
 The tested scenarios are also copied into the run's test results.
 
-MP4 export requires system FFmpeg or the optional `imageio-ffmpeg` package.
+Default validation exports only a ranked CSV plus metadata/scenario JSON files,
+without per-scenario directories, plots, trajectories or video. This is a
+checkpoint-selection validation suite, not a final untouched test set.
+Optional five-scenario MP4 export requires `test --artifacts`, system FFmpeg
+or the optional `imageio-ffmpeg` package.
 The latter includes the FFmpeg executable. Install it in the training environment:
 
 ```sh
@@ -140,28 +151,36 @@ All artifacts are inside the timestamped training directory:
   config.json
   progress.csv
   checkpoints.json
-  <best-step>/model.data-00000-of-00001, model.index, model.meta, checkpoint
-  <final-step>/model.data-00000-of-00001, model.index, model.meta, checkpoint
-  test/best/
+  <each-retained-step>/model.data-00000-of-00001, model.index, model.meta, checkpoint
+  test/validation_200_seed30000/
     scenarios.json
-    summary.json
+    metadata.json
     summary.csv
-    scenario_01/
-      animation.mp4
-      distances.png
-      distances.csv
-    ... scenario_02 through scenario_05
 ```
 
-`config.json` records environment settings, algorithm hyperparameters, network
-settings, training/evaluation/test seeds, animation settings, and runtime versions.
-Test summaries identify the restored checkpoint and record each scenario's return,
-length, capture result and step, and initial/minimum/final nearest distance.
-`summary.json` includes the overall success rate. Capture follows the environment's
-strict nearest-distance threshold of 1 unit. Distances respect the periodic world
-geometry. CSV files and plots contain the initial state at step 0 and every
-interaction step. Videos show every fourth step plus the initial and final states,
-at 20 fps. Adjust these with `--animation-stride` and `--animation-fps`.
+`summary.csv` has one row per model, sorted by **success rate descending,
+mean minimum distance ascending, mean final distance ascending**. Exact ties
+share a rank, with stable step/path ordering for display. Distances use torus
+geometry. Capture means distance strictly less than 1 after an environment step;
+capture at step 1024 counts as success. Both distance means include successes
+and failures. Minimum distance includes the initial state; final distance is
+measured at capture or timeout. It is not the time-average distance.
+
+Columns include `rank`, `step`, `aliases`, `checkpoint`, `episodes`, `success_count`,
+`success_rate`, `mean_minimum_distance`, `mean_final_distance`,
+`success_rate_ci95_low/high` (Wilson), `mean_episode_return`, `std_episode_return`,
+`mean_episode_steps`, `mean_capture_steps_success` (blank if no captures),
+and `elapsed_seconds`. Only the three stated metrics participate in ranking.
+The interval describes scenario uncertainty for a fixed policy, not variation
+across independently trained policies. CSV is updated after each model;
+`metadata.json` marks the batch as running, complete, or failed.
+
+`aliases` joins all matching model labels with semicolons, for example
+`best;selected` or `final`; unlabeled periodic models have an empty value.
+The labels are an export snapshot, also recorded in `metadata.json` as
+`alias_snapshot`. Batch validation assigns `selected` to its own completed
+ranking's leader. A single-model test displays existing labels without selecting
+a new winner. Later validations update the run's alias but do not rewrite old CSVs.
 
 For a short smoke run:
 
@@ -171,7 +190,7 @@ For a short smoke run:
 
 ### 续训与独立测试
 
-辅助入口统一放在 `deep_rl_for_swarms/mappo_tools.py`，提供 `resume` 和 `test` 两个子命令。
+辅助入口统一放在 `deep_rl_for_swarms/mappo_tools.py`，提供 `resume`、`test`、`test-all`。
 在仓库根目录运行：
 
 ```powershell
@@ -181,14 +200,22 @@ For a short smoke run:
 # 单独测试 40 万步模型
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps\400000
 
-# 也可以传运行目录，用 best/final 选择模型；默认 final
+# 一键复评某个 run 保留的全部模型，默认 200 场景
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261123_122746_387474_600000steps
+
+# 也可以传运行目录，用 best/final/selected 选择模型；默认 final
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps --model best
+
+# 原来的五场景动画改为显式启用(200场景目前就不生成场景动画了, 后续可以加上一个, 指定场景生成动画的)
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps\400000 --artifacts
 ```
 
-`resume` 默认继承来源 `config.json` 的环境、训练参数、种子和训练后测试设置，
+`resume` 默认继承来源 `config.json` 的环境、训练参数和种子，
 恢复 actor、集中式 critic 和 Adam 的动量等状态，所有原有可训练参数继续更新。
 如需改变超参数，可以显式传入 `--learning-rate`、`--entropy-coef`、`--gamma`、
-`--lam`、`--clip`、`--epochs` 等；使用 `--no-test` 可跳过续训后的自动测试。
+`--lam`、`--clip`、`--epochs` 等；使用 `--no-test` 可跳过续训后的自动批量评测。
+旧配置缺少 `checkpoint_interval` 时补为 50000；旧五场景测试配置升级为
+200 场景/种子 30000。新协议的场景数和种子继续继承，可显式覆盖。
 `--help` 列出全部可覆盖选项。当前工具要求模型结构和环境运行参数与现有实现兼容。
 
 续训创建独立的 `<时间戳>_<追加步数>steps/`，默认放在来源 run 的同级目录，
@@ -199,21 +226,23 @@ For a short smoke run:
 `target_total_timesteps=1000000`。日志 `TimestepsSoFar` 和模型文件夹使用累计步数，
 `TimestepsThisRun` 使用本次新增步数。评估间隔按本次新增步数计数。
 
-续训会重新评估起点模型，在新 run 中保留一个本地 best 基线；后续模型表现更好时才替换它。
+续训会重新评估起点模型，在新 run 中保留本地基线。后续刷新 best 时基线也不删除。
 不复制其他未选中的来源模型。环境、NumPy 和 TensorFlow 随机流重新开始；
 旧检查点未保存采样器与回合状态，因此这不是逐位复现原训练轨迹的断点恢复。
 
 独立 `test` 支持步数文件夹、`model` 前缀、`.index`/`.meta` 文件或 run 文件夹，
-输出为来源 run 的 `test/<模型累计步数>/`，例如 `test/400000/`。
-沿用已有的 5 个固定测试场景、确定性动作以及距离 CSV/PNG、MP4 和汇总 JSON/CSV。
-即使按 `--model best` 选择，也使用实际步数命名输出；原训练入口的自动测试仍使用 `test/best/`
-或 `test/final/`。已有同名测试目录会报错，保留之前的结果；重新测试前需先移动该目录。
-可用 `--test-scenarios`、`--test-seed`、`--animation-fps` 和 `--animation-stride` 覆盖测试设置。
+默认输出为来源 run 的 `test/<模型累计步数>/validation_200_seed30000/`，
+内容与批量评测相同，只有一个模型行；批量输出为 `test/validation_200_seed30000/`。
+这两个新路径可与已有五场景结果共存。已有报告会报错保护；可先移动旧目录，
+或用 `--output-dir` 指定新目录。`test-all` 也支持该选项。
+`--test-episodes`、`--test-scenarios`、`--test-seed` 控制验证集。
+`--artifacts` 则保留原来的五场景 `test/<step>/` 目录格式，才使用动画参数。
+批量完成后 `checkpoints.json` 增加 `selected` 别名；旧 `best`/`final` 含义不变。
 旧运行被移动后，工具会尝试使用运行目录内已复制的测试场景。
 Windows 下辅助命令会临时补充旧 SciPy wheel 的 DLL 搜索目录，不修改依赖安装。
 
 检查续训恢复、Adam 状态、累计步数、配置继承和历史链：
 
 ```powershell
-.\.venv\python.exe -m unittest discover -s tests -p test_mappo_tools.py
+.\.venv\python.exe -m unittest discover -s tests -p "test_mappo*.py"
 ```

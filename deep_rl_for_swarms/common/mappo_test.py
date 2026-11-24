@@ -1,54 +1,23 @@
 """Fixed pursuit scenarios and post-training test reports."""
 
 import csv
-import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 
 import numpy as np
 
-from deep_rl_for_swarms.common.mappo_visualization import save_animation, save_distance_plot
+from deep_rl_for_swarms.common.mappo_evaluation import load_scenarios
 
 
-def load_test_scenarios(env_settings, seed, path=None):
-    settings_hash = hashlib.sha256(json.dumps(env_settings, sort_keys=True).encode()).hexdigest()[:10]
-    if path is None:
-        path = Path('test_scenarios') / 'pursuit_{}_seed{}.json'.format(settings_hash, seed)
-    path = Path(path)
-    seeds = list(range(seed, seed + 5))
-    if path.exists():
-        with path.open() as source:
-            suite = json.load(source)
-        if (suite.get('schema_version') != 1 or suite.get('environment_settings') != env_settings
-                or [scene['seed'] for scene in suite['scenarios']] != seeds):
-            raise ValueError('Saved test scenarios must match the environment settings and test seeds.')
-        return suite, path.resolve()
-
-    scenarios = []
-    for index, episode_seed in enumerate(seeds, 1):
-        random = np.random.RandomState(episode_seed)
-        pursuers = random.rand(env_settings['nr_pursuers'], 3)
-        pursuers[:, :2] = env_settings['world_size'] * (0.9 * pursuers[:, :2] + 0.05)
-        pursuers[:, 2] *= 2 * np.pi
-        prey = env_settings['world_size'] * (0.9 * random.rand(1, 2) + 0.05)
-        scenarios.append({'id': 'scenario_{:02d}'.format(index), 'seed': episode_seed,
-                          'initial_state': {'pursuer_states': pursuers.tolist(),
-                                            'evader_states': prey.tolist()}})
-    suite = {'schema_version': 1, 'environment': 'PursuitEvasionEnv',
-             'environment_settings': env_settings, 'scenarios': scenarios}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode='w', dir=str(path.parent), delete=False) as output:
-        json.dump(suite, output, indent=2, allow_nan=False)
-        temporary_path = output.name
-    os.replace(temporary_path, str(path))
-    return suite, path.resolve()
+def load_test_scenarios(env_settings, seed, path=None, episodes=5):
+    """Compatibility wrapper for the optional trajectory/animation export."""
+    return load_scenarios(env_settings, seed, episodes, path)
 
 
 def run_tests(env, session, policy, run_dir, selection, suite, model='best', fps=20, frame_stride=4):
     import tensorflow as tf
+    from deep_rl_for_swarms.common.mappo_visualization import save_animation, save_distance_plot
 
     start_time = time.perf_counter()
     run_dir = Path(run_dir)

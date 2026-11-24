@@ -38,13 +38,15 @@ class CheckpointToolsTests(unittest.TestCase):
         cls.root = Path(cls.temporary.name)
         # Evaluations are fixed so best-checkpoint retention is deterministic;
         # graph construction, rollout, optimization and checkpoint IO are real.
-        with patch('deep_rl_for_swarms.rl_algo.mappo._evaluate', return_value=(0.0, 0.0)):
+        metrics = {'mean_episode_return': 0.0, 'std_episode_return': 0.0,
+                   'success_rate': 0.0, 'mean_minimum_distance': 1.0, 'mean_final_distance': 2.0}
+        with patch('deep_rl_for_swarms.rl_algo.mappo._evaluate', return_value=metrics):
             cls.source = Path(train(8, str(cls.root), rollout_steps=8,
                                     minibatch_steps=4, epochs=1, eval_episodes=1, test=False))
             cls.source_hashes = file_hashes(cls.source)
             cls.continued = Path(resume_training(
-                cls.source / '8', 4, note='续训测试', learning_rate=1e-4))
-            cls.chained = Path(resume_training(cls.continued / '12', 4, note='第二次续训'))
+                cls.source / '8', 4, note='续训测试', learning_rate=1e-4, test=False))
+            cls.chained = Path(resume_training(cls.continued / '12', 4, note='第二次续训', test=False))
 
     @classmethod
     def tearDownClass(cls):
@@ -71,6 +73,7 @@ class CheckpointToolsTests(unittest.TestCase):
         checkpoints = read_json(self.continued / 'checkpoints.json')
         self.assertEqual(checkpoints['best']['step'], 8)
         self.assertEqual(checkpoints['final']['step'], 12)
+        self.assertEqual([record['step'] for record in checkpoints['checkpoints']], [8, 12])
         with (self.continued / 'progress.csv').open() as source:
             rows = list(csv.DictReader(source))
         self.assertEqual(int(rows[-1]['TimestepsSoFar']), 12)
@@ -117,7 +120,7 @@ class CheckpointToolsTests(unittest.TestCase):
         self.assertEqual(set(self.root.iterdir()), before)
 
     def test_existing_test_output_is_protected(self):
-        directory = self.continued / 'test' / '12'
+        directory = self.continued / 'test' / '12' / 'validation_200_seed30000'
         directory.mkdir(parents=True, exist_ok=True)
         sentinel = directory / 'summary.json'
         sentinel.write_text('{"preserved": true}')

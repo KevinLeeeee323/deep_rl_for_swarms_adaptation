@@ -11,8 +11,8 @@ import numpy as np
 
 def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64, epochs=5,
           eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
-          test=True, test_seed=20_000, test_scenarios=None, test_model='best',
-          animation_fps=20, animation_stride=4, resume=None):
+          test=True, test_seed=30_000, test_scenarios=None, test_episodes=200,
+          checkpoint_interval=50_000, resume=None):
     import tensorflow as tf
     from deep_rl_for_swarms.common import logger
     from deep_rl_for_swarms.common import tf_util as U
@@ -35,12 +35,10 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         eval_env = PursuitEvasionEnv(**env_settings)
         suite_path = None
         if test:
-            from deep_rl_for_swarms.common.mappo_test import load_test_scenarios, run_tests
-            from deep_rl_for_swarms.common.mappo_visualization import ffmpeg_executable
-            if set(range(test_seed, test_seed + 5)).intersection(range(eval_seed, eval_seed + eval_episodes)):
+            from deep_rl_for_swarms.common.mappo_evaluation import load_scenarios
+            if set(range(test_seed, test_seed + test_episodes)).intersection(range(eval_seed, eval_seed + eval_episodes)):
                 raise ValueError('Test seeds must differ from evaluation seeds.')
-            ffmpeg_executable()
-            suite, suite_path = load_test_scenarios(env_settings, test_seed, test_scenarios)
+            suite, suite_path = load_scenarios(env_settings, test_seed, test_episodes, test_scenarios)
             for scene in suite['scenarios']:
                 eval_env.reset(initial_state=scene['initial_state'])
         algorithm_settings = {
@@ -51,7 +49,8 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         }
         algorithm_settings.update(rollout_steps=rollout_steps, minibatch_steps=minibatch_steps,
                                   epochs=epochs, eval_interval=eval_interval,
-                                  eval_episodes=eval_episodes, eval_seed=eval_seed)
+                                  eval_episodes=eval_episodes, eval_seed=eval_seed,
+                                  checkpoint_interval=checkpoint_interval)
         if resume is not None:
             algorithm_settings.update(resume['training'])
         config = {
@@ -81,14 +80,17 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                         'value_loss_coefficient': 0.5,
                         'advantage_normalization_epsilon': 1e-8},
             'optimizer': {'name': 'Adam', 'beta1': 0.9, 'beta2': 0.999, 'epsilon': 1e-8},
-            'test': {'enabled': test, 'episodes': 5, 'seed': test_seed,
+            'test': {'enabled': test, 'purpose': 'checkpoint_selection',
+                     'episodes': test_episodes, 'seed': test_seed,
                      'scenarios_path': str(suite_path) if suite_path is not None else None,
-                     'model': test_model, 'max_episode_steps': 1024,
-                     'fps': animation_fps, 'frame_stride': animation_stride,
-                     'actions': 'policy_mean'},
-            'checkpoint_policy': {'retained_models': ['best', 'final'],
-                                  'selection_metric': 'mean_episode_return',
-                                  'selection_order': 'higher_is_better',
+                     'models': 'all_saved', 'max_episode_steps': 1024,
+                     'artifacts': False, 'actions': 'policy_mean'},
+            'checkpoint_policy': {'retained_models': ['periodic', 'monitor_best', 'final', 'resume_baseline'],
+                                  'checkpoint_interval': checkpoint_interval,
+                                  'selection_metric': ['success_rate', 'mean_minimum_distance', 'mean_final_distance'],
+                                  'selection_order': ['descending', 'ascending', 'ascending'],
+                                  'best_alias': 'highest_monitor_mean_return',
+                                  'selected_alias': 'best_post_training_validation_rank',
                                   'eval_actions': 'policy_mean'},
             'runtime': {'python': platform.python_version(), 'numpy': np.__version__,
                         'tensorflow': tf.__version__, 'processes': 1,
@@ -103,19 +105,17 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         with tf.Graph().as_default(), U.single_threaded_session() as session:
             tf.set_random_seed(seed)
             with logger.scoped_configure(dir=log_dir, format_strs=['stdout', 'csv']):
-                policy = mappo.learn(
+                mappo.learn(
                     env, session, num_timesteps, logger.get_dir(),
                     eval_env=eval_env,
                     resume_checkpoint=resume['checkpoint'] if resume is not None else None,
                     initial_timesteps=resume['step'] if resume is not None else 0,
                     **algorithm_settings)
-                if test:
-                    with open(os.path.join(log_dir, 'checkpoints.json')) as source:
-                        selection = json.load(source)
-                    summary = run_tests(eval_env, session, policy, log_dir, selection, suite,
-                                        model=test_model, fps=animation_fps,
-                                        frame_stride=animation_stride)
-                    logger.log('Test success rate {:.1%}'.format(summary['success_rate']))
+        if test:
+            from deep_rl_for_swarms.mappo_tools import test_all_checkpoints
+            result = test_all_checkpoints(log_dir, test_seed=test_seed, test_episodes=test_episodes,
+                                           test_scenarios=str(suite_path))
+            print('Post-training validation report: {}'.format(result['output_dir']), flush=True)
         return os.path.abspath(log_dir)
     finally:
         env.close()
@@ -136,24 +136,25 @@ def main():
     parser.add_argument('--eval-seed', type=int, default=10_000,
                         help='First seed in the fixed sequence of evaluation episode seeds.')
     parser.add_argument('--no-test', dest='test', action='store_false',
-                        help='Skip the automatic five-scenario test and MP4 export.')
-    parser.add_argument('--test-seed', type=int, default=20_000)
-    parser.add_argument('--test-scenarios', help='Path to a reusable JSON file of five test scenarios.')
-    parser.add_argument('--test-model', choices=['best', 'final'], default='best')
-    parser.add_argument('--animation-fps', type=int, default=20)
-    parser.add_argument('--animation-stride', type=int, default=4,
-                        help='Render every Nth test step, including the initial and final states.')
+                        help='Skip automatic ranking of all saved models on 200 scenarios (default: enabled).')
+    parser.add_argument('--test-seed', type=int, default=30_000)
+    parser.add_argument('--test-episodes', type=int, default=200)
+    parser.add_argument('--test-scenarios', help='Reusable JSON validation suite matching the test seed/count.')
+    parser.add_argument('--checkpoint-interval', type=int, default=50_000,
+                        help='Keep checkpoints every N new training steps and at the final step.')
     parser.add_argument('--log-dir', default='runs/',
-                        help='Parent directory for timestamped training runs (default: logs/).')
+                        help='Parent directory for timestamped training runs (default: runs/).')
     args = parser.parse_args()
     for name in ('num_timesteps', 'rollout_steps', 'minibatch_steps', 'epochs',
-                 'eval_interval', 'eval_episodes', 'animation_fps', 'animation_stride'):
+                 'eval_interval', 'eval_episodes', 'test_episodes', 'checkpoint_interval'):
         if getattr(args, name) < 1:
             parser.error('--' + name.replace('_', '-') + ' must be positive')
-    for name, count in (('seed', 1), ('eval_seed', args.eval_episodes), ('test_seed', 5)):
+    for name, count in (('seed', 1), ('eval_seed', args.eval_episodes), ('test_seed', args.test_episodes)):
         if not 0 <= getattr(args, name) <= 2**32 - count:
             parser.error('--' + name.replace('_', '-') + ' is outside the supported NumPy seed range')
-    train(**vars(args))
+    from deep_rl_for_swarms.mappo_tools import _scipy_dll_directory
+    with _scipy_dll_directory():
+        train(**vars(args))
 
 
 if __name__ == '__main__':

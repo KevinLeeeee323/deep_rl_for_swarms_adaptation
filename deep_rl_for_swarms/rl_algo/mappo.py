@@ -2,13 +2,13 @@
 
 import json
 import os
-import shutil
 import time
 
 import numpy as np
 import tensorflow as tf
 
 from deep_rl_for_swarms.common import logger
+from deep_rl_for_swarms.common.mappo_evaluation import evaluate_scenarios, make_scenarios, summarize
 from deep_rl_for_swarms.policies.mlp_mean_embedding_policy import MlpPolicy
 
 
@@ -39,35 +39,27 @@ def _advantages(rewards, values, dones, bootstrap, gamma, lam):
 def _evaluate(env, session, observations_input, action_mode, episodes, seed):
     # Environment reset uses global NumPy randomness. Evaluation must preserve
     # the training sampler's random state as well as its environment state.
-    random_state = np.random.get_state()
-    returns = []
-    try:
-        for episode in range(episodes):
-            np.random.seed(seed + episode)
-            env.seed(seed + episode)
-            observations = env.reset()
-            episode_return = 0.0
-            done = False
-            while not done:
-                actions = session.run(action_mode, {observations_input: observations})
-                observations, rewards, done, _ = env.step(actions)
-                episode_return += float(np.mean(rewards))
-            returns.append(episode_return)
-    finally:
-        np.random.set_state(random_state)
-    return float(np.mean(returns)), float(np.std(returns))
+    settings = {'nr_pursuers': env.nr_agents, 'nr_evaders': env.nr_evaders,
+                'world_size': env.world_size}
+    # Match env.reset's floating-point expression exactly. Its 0.95 - 0.05
+    # differs slightly from the legacy animation suite's literal 0.9.
+    suite = make_scenarios(settings, seed, episodes, placement_scale=0.95 - 0.05)
+    return summarize(evaluate_scenarios(
+        env, lambda observations: session.run(action_mode, {observations_input: observations}), suite))
 
 
 def _save_checkpoint(saver, session, checkpoint_dir, step, selection,
-                     is_best, is_final, mean_return, eval_episodes, eval_seed):
+                     is_best, is_final, mean_return, eval_episodes, eval_seed, metrics=None):
     run_dir = os.path.realpath(checkpoint_dir)
     step_dir = os.path.join(run_dir, str(step))
     os.makedirs(step_dir, exist_ok=False)
     saver.save(session, os.path.join(step_dir, 'model'))
-    previous_best = selection.get('best')
     record = {'step': step, 'path': str(step) + '/model',
               'eval_mean_return': mean_return, 'eval_episodes': eval_episodes,
               'eval_seed': eval_seed}
+    if metrics is not None:
+        record['eval_metrics'] = metrics
+    selection.setdefault('checkpoints', []).append(record)
     if is_best:
         selection['best'] = record
     if is_final:
@@ -77,25 +69,16 @@ def _save_checkpoint(saver, session, checkpoint_dir, step, selection,
         json.dump(selection, output, indent=2, allow_nan=False)
     os.replace(temporary_path, os.path.join(run_dir, 'checkpoints.json'))
 
-    if is_best and previous_best is not None:
-        previous_step = previous_best['step']
-        retained_steps = {entry['step'] for entry in selection.values()}
-        if previous_step not in retained_steps:
-            previous_dir = os.path.realpath(os.path.join(run_dir, str(previous_step)))
-            if os.path.dirname(previous_dir) != run_dir:
-                raise ValueError('Checkpoint directory must be inside the training run directory.')
-            shutil.rmtree(previous_dir)
-
 
 def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
           minibatch_steps=64, epochs=5, gamma=0.99, lam=0.98,
           clip=0.2, learning_rate=3e-4, entropy_coef=0.01,
           eval_env=None, eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
-          resume_checkpoint=None, initial_timesteps=0):
+          resume_checkpoint=None, initial_timesteps=0, checkpoint_interval=50_000):
     if eval_env is None or eval_env is env:
         raise ValueError('Evaluation requires a separate environment.')
-    if eval_interval < 1 or eval_episodes < 1:
-        raise ValueError('Evaluation interval and episode count must be positive.')
+    if eval_interval < 1 or eval_episodes < 1 or checkpoint_interval < 1:
+        raise ValueError('Evaluation/checkpoint intervals and episode count must be positive.')
     if num_timesteps < 1 or initial_timesteps < 0:
         raise ValueError('Additional timesteps must be positive and initial timesteps nonnegative.')
     if initial_timesteps and resume_checkpoint is None:
@@ -141,16 +124,17 @@ def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
     episode_length = 0
     best_return = -np.inf
     next_eval_step = eval_interval
+    next_checkpoint_step = checkpoint_interval
     selection = {}
     if resume_checkpoint is not None:
         # Retain a local baseline so a worse continuation cannot replace the
         # restored model as best. Source checkpoints are never modified.
-        best_return, _ = _evaluate(eval_env, session, obs_input, action_mode,
-                                   eval_episodes, eval_seed)
+        baseline = _evaluate(eval_env, session, obs_input, action_mode, eval_episodes, eval_seed)
+        best_return = baseline['mean_episode_return']
         if not np.isfinite(best_return):
             raise ValueError('Restored checkpoint evaluation returned a non-finite mean reward.')
         _save_checkpoint(saver, session, checkpoint_dir, initial_timesteps, selection,
-                         True, False, best_return, eval_episodes, eval_seed)
+                         True, False, best_return, eval_episodes, eval_seed, metrics=baseline)
         logger.log('Restored step {}: baseline evaluation return {}'.format(
             initial_timesteps, best_return))
     for start in range(0, num_timesteps, rollout_steps):
@@ -210,22 +194,33 @@ def learn(env, session, num_timesteps, checkpoint_dir, rollout_steps=2048,
         is_final = step == num_timesteps
         eval_mean_return = np.nan
         eval_std_return = np.nan
+        metrics = None
+        is_best = False
         if step >= next_eval_step or is_final:
-            eval_mean_return, eval_std_return = _evaluate(
+            metrics = _evaluate(
                 eval_env, session, obs_input, action_mode, eval_episodes, eval_seed)
+            eval_mean_return = metrics['mean_episode_return']
+            eval_std_return = metrics['std_episode_return']
             if not np.isfinite(eval_mean_return):
                 raise ValueError('Evaluation returned a non-finite mean reward.')
             is_best = eval_mean_return > best_return
-            if is_best or is_final:
-                _save_checkpoint(saver, session, checkpoint_dir, initial_timesteps + step, selection,
-                                 is_best, is_final, eval_mean_return,
-                                 eval_episodes, eval_seed)
             if is_best:
                 best_return = eval_mean_return
             next_eval_step = (step // eval_interval + 1) * eval_interval
+        if step >= next_checkpoint_step or is_best or is_final:
+            _save_checkpoint(saver, session, checkpoint_dir, initial_timesteps + step, selection,
+                             is_best, is_final,
+                             eval_mean_return if metrics is not None else None,
+                             eval_episodes, eval_seed, metrics=metrics)
+            if step >= next_checkpoint_step:
+                next_checkpoint_step = (step // checkpoint_interval + 1) * checkpoint_interval
         logger.record_tabular('EvalMeanReturn', eval_mean_return)
         logger.record_tabular('EvalStdReturn', eval_std_return)
-        logger.record_tabular('BestEvalReturn', best_return if selection else np.nan)
+        for column, key in [('EvalSuccessRate', 'success_rate'),
+                            ('EvalMeanMinimumDistance', 'mean_minimum_distance'),
+                            ('EvalMeanFinalDistance', 'mean_final_distance')]:
+            logger.record_tabular(column, metrics[key] if metrics is not None else np.nan)
+        logger.record_tabular('BestEvalReturn', best_return if np.isfinite(best_return) else np.nan)
         logger.record_tabular('ElapsedSeconds', time.perf_counter() - start_time)
         logger.dump_tabular()
     return policy

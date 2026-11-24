@@ -1,7 +1,7 @@
 """Checkpoint utilities: resume MAPPO training or test a saved model.
 
 Run from the repository root with ``python -m deep_rl_for_swarms.mappo_tools``.
-The source run is read-only except for new standalone test reports.
+Testing writes reports and a selected-checkpoint alias, without changing weights.
 """
 
 import argparse
@@ -11,13 +11,14 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import time
 
 import numpy as np
 
 
 TRAINING_KEYS = ('rollout_steps', 'minibatch_steps', 'epochs', 'gamma', 'lam',
                  'clip', 'learning_rate', 'entropy_coef', 'eval_interval',
-                 'eval_episodes', 'eval_seed')
+                 'eval_episodes', 'eval_seed', 'checkpoint_interval')
 
 
 @contextmanager
@@ -86,6 +87,8 @@ def resolve_checkpoint(checkpoint, model='final'):
     selection_path = run_dir / 'checkpoints.json'
     if selection_path.exists():
         for entry in _read_json(selection_path).values():
+            if not isinstance(entry, dict) or 'path' not in entry:
+                continue
             if (run_dir / entry['path']).resolve() == path:
                 if entry['step'] != step:
                     raise ValueError('Checkpoint step disagrees with checkpoints.json.')
@@ -113,7 +116,7 @@ def validate_environment(config, env):
             raise ValueError('Environment setting {} differs from the saved run.'.format(key))
 
 
-def _scenario_path(source, seed, explicit_path=None):
+def _scenario_path(source, seed, explicit_path=None, episodes=5):
     if explicit_path is not None:
         return str(Path(explicit_path).expanduser().resolve())
     if seed != source['config'].get('test', {}).get('seed', 20_000):
@@ -121,26 +124,30 @@ def _scenario_path(source, seed, explicit_path=None):
     saved = source['config'].get('test', {}).get('scenarios_path')
     if saved:
         path = Path(saved)
+        if not path.is_absolute() and not path.is_file():
+            path = source['run_dir'] / path
         if path.is_file():
-            return str(path.resolve())
-        if not path.is_absolute() and (source['run_dir'] / path).is_file():
-            return str((source['run_dir'] / path).resolve())
+            suite = _read_json(path)
+            if [scene['seed'] for scene in suite['scenarios']] == list(range(seed, seed + episodes)):
+                return str(path.resolve())
     # Run-local copies keep a moved run usable even when its old absolute
     # test_scenarios path no longer exists.
     for path in sorted((source['run_dir'] / 'test').glob('*/scenarios.json')):
         suite = _read_json(path)
         if (suite.get('environment_settings') == source['config']['environment_settings']
-                and [scene['seed'] for scene in suite['scenarios']] == list(range(seed, seed + 5))):
+                and [scene['seed'] for scene in suite['scenarios']] == list(range(seed, seed + episodes))):
             return str(path.resolve())
     return None
 
 
-def _validate_seeds(seed, eval_seed, eval_episodes, test_seed, test):
+def _validate_seeds(seed, eval_seed, eval_episodes, test_seed, test, test_episodes=5):
+    if eval_episodes < 1 or test_episodes < 1:
+        raise ValueError('Evaluation and test episode counts must be positive.')
     for name, value, count in [('seed', seed, 1), ('eval_seed', eval_seed, eval_episodes),
-                                ('test_seed', test_seed, 5)]:
+                                ('test_seed', test_seed, test_episodes)]:
         if not 0 <= value <= 2**32 - count:
             raise ValueError('{} is outside the supported NumPy seed range.'.format(name))
-    if test and set(range(test_seed, test_seed + 5)).intersection(
+    if test and set(range(test_seed, test_seed + test_episodes)).intersection(
             range(eval_seed, eval_seed + eval_episodes)):
         raise ValueError('Test seeds must differ from evaluation seeds.')
 
@@ -161,13 +168,13 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
     optimizer = {'name': 'Adam', 'beta1': 0.9, 'beta2': 0.999, 'epsilon': 1e-8}
     if config.get('optimizer') != optimizer:
         raise ValueError('Saved optimizer settings do not match the current Adam optimizer.')
-    training = {key: config['training'][key] for key in TRAINING_KEYS}
+    training = {key: config['training'][key] for key in TRAINING_KEYS if key in config['training']}
+    training.setdefault('checkpoint_interval', 50_000)
     test_config = config.get('test', {})
-    options = {'seed': config['seed'], 'test': test_config.get('enabled', True),
-               'test_seed': test_config.get('seed', 20_000), 'test_scenarios': None,
-               'test_model': test_config.get('model', 'best'),
-               'animation_fps': test_config.get('fps', 20),
-               'animation_stride': test_config.get('frame_stride', 4)}
+    options = {'seed': config['seed'], 'test': True,
+               'test_seed': test_config.get('seed', 30_000) if test_config.get('purpose') == 'checkpoint_selection' else 30_000,
+               'test_episodes': test_config.get('episodes', 200) if test_config.get('purpose') == 'checkpoint_selection' else 200,
+               'test_scenarios': None}
     for key, value in overrides.items():
         if value is None:
             continue
@@ -177,7 +184,7 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
             options[key] = value
         else:
             raise ValueError('Unknown continuation option: {}'.format(key))
-    for key in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes'):
+    for key in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'checkpoint_interval'):
         if training[key] < 1:
             raise ValueError('{} must be positive.'.format(key))
     for key in ('gamma', 'lam'):
@@ -187,18 +194,17 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
         raise ValueError('learning_rate must be finite and positive.')
     if not 0 < training['clip'] < 1 or not np.isfinite(training['entropy_coef']) or training['entropy_coef'] < 0:
         raise ValueError('clip must be in (0, 1) and entropy_coef must be finite and nonnegative.')
-    if options['animation_fps'] < 1 or options['animation_stride'] < 1:
-        raise ValueError('Animation fps and stride must be positive.')
     _validate_seeds(options['seed'], training['eval_seed'], training['eval_episodes'],
-                    options['test_seed'], options['test'])
-    options['test_scenarios'] = _scenario_path(source, options['test_seed'], options['test_scenarios'])
+                    options['test_seed'], options['test'], options['test_episodes'])
+    options['test_scenarios'] = _scenario_path(source, options['test_seed'], options['test_scenarios'],
+                                             options['test_episodes'])
     parent = {'source_run_directory': str(source['run_dir']),
               'source_config': str(source['run_dir'] / 'config.json'),
               'source_checkpoint': source['checkpoint'], 'source_step': source['step']}
     history = copy.deepcopy(config.get('continuation', {}).get('history', []))
     history.append(dict(parent, additional_timesteps=additional_timesteps, note=note))
-    changes = {key: {'from': config['training'][key], 'to': value}
-               for key, value in training.items() if value != config['training'][key]}
+    changes = {key: {'from': config['training'].get(key, 50_000), 'to': value}
+               for key, value in training.items() if value != config['training'].get(key, 50_000)}
     source['training'] = training
     source['continuation'] = dict(
         parent, additional_timesteps=additional_timesteps,
@@ -206,18 +212,19 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
         restored_components=['actor', 'central_critic', 'Adam'],
         sampler_state_restored=False, note=note, training_overrides=changes, history=history)
     runner_settings = {key: training[key] for key in (
-        'rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed')}
+        'rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed', 'checkpoint_interval')}
     return train(additional_timesteps, str(log_dir or source['run_dir'].parent),
                  resume=source, **dict(runner_settings, **options))
 
 
-def test_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=None,
+def export_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=None,
                     animation_fps=None, animation_stride=None):
     """Test a checkpoint on the saved suite, writing run/test/<step>/ artifacts."""
     source = resolve_checkpoint(checkpoint, model)
     config = source['config']
     saved_test = config.get('test', {})
-    seed = saved_test.get('seed', 20_000) if test_seed is None else test_seed
+    seed = (20_000 if saved_test.get('purpose') == 'checkpoint_selection'
+            else saved_test.get('seed', 20_000)) if test_seed is None else test_seed
     fps = saved_test.get('fps', 20) if animation_fps is None else animation_fps
     stride = saved_test.get('frame_stride', 4) if animation_stride is None else animation_stride
     if fps < 1 or stride < 1:
@@ -259,25 +266,182 @@ def test_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=No
         np.random.set_state(random_state)
 
 
+def discover_checkpoints(run_dir):
+    """Discover every physical checkpoint, including legacy best/final runs."""
+    run_dir = Path(run_dir).expanduser().resolve()
+    if not (run_dir / 'config.json').is_file():
+        raise ValueError('Expected a run directory containing config.json.')
+    paths = sorted((path for path in run_dir.iterdir() if path.is_dir() and path.name.isdigit()),
+                   key=lambda path: int(path.name))
+    sources = [resolve_checkpoint(path) for path in paths]
+    if not sources:
+        raise ValueError('No saved checkpoints found in {}'.format(run_dir))
+    return sources
+
+
+def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None,
+                  select_candidate=False):
+    from deep_rl_for_swarms.common.mappo_evaluation import (
+        CHECKPOINT_ALIASES, RANKING, atomic_json, evaluate_scenarios,
+        load_scenarios, summarize, write_ranked_csv)
+
+    source = sources[0]
+    config = source['config']
+    saved = config.get('test', {}) if config.get('test', {}).get('purpose') == 'checkpoint_selection' else {}
+    seed = saved.get('seed', 30_000) if test_seed is None else test_seed
+    episodes = saved.get('episodes', 200) if test_episodes is None else test_episodes
+    output_dir = Path(output_dir or source['run_dir'] / 'test' /
+                      'validation_{}_seed{}'.format(episodes, seed)).resolve()
+    if output_dir.exists():
+        raise FileExistsError('Test output already exists; choose --output-dir or move it: {}'.format(output_dir))
+    manifest_path = source['run_dir'] / 'checkpoints.json'
+    manifest = _read_json(manifest_path) if manifest_path.exists() else {}
+    alias_snapshot = {name: str((source['run_dir'] / manifest[name]['path']).resolve())
+                      for name in CHECKPOINT_ALIASES
+                      if isinstance(manifest.get(name), dict) and manifest[name].get('path')}
+    if select_candidate:
+        # A batch selects its own winner only after all models finish. A single
+        # checkpoint test merely displays the aliases captured at its start.
+        alias_snapshot.pop('selected', None)
+    for candidate in sources:
+        if candidate['config']['environment_settings'] != config['environment_settings']:
+            raise ValueError('All candidate checkpoints must use the same environment settings.')
+        training = candidate['config']['training']
+        _validate_seeds(candidate['config']['seed'], training['eval_seed'], training['eval_episodes'],
+                        seed, True, episodes)
+    suite, suite_path = load_scenarios(config['environment_settings'], seed, episodes,
+                                       _scenario_path(source, seed, test_scenarios, episodes))
+
+    import tensorflow as tf
+    from deep_rl_for_swarms.common import tf_util as U
+    from deep_rl_for_swarms.ma_envs.envs.point_envs.pursuit_evasion import PursuitEvasionEnv
+    from deep_rl_for_swarms.policies.mlp_mean_embedding_policy import MlpPolicy
+
+    env = PursuitEvasionEnv(**config['environment_settings'])
+    random_state = np.random.get_state()
+    rows = []
+    created_output = False
+    metadata = {'purpose': 'checkpoint_selection', 'status': 'running', 'seed': seed,
+                'episodes': episodes, 'scenarios_path': str(suite_path), 'ranking': RANKING,
+                'actions': 'policy_mean', 'max_episode_steps': 1024,
+                'capture_comparison': 'distance < capture_radius', 'capture_radius': env.capture_radius,
+                'distance_geometry': 'torus' if env.torus else 'euclidean',
+                'distance_definition': 'nearest pursuer to evader; minimum includes initial state; '
+                                       'final is at capture or timeout; means include all scenarios',
+                'checkpoints': [candidate['checkpoint'] for candidate in sources],
+                'alias_snapshot': dict(alias_snapshot), 'results': []}
+    try:
+        for candidate in sources:
+            validate_environment(candidate['config'], env)
+        # Validate externally supplied initial states before creating report output.
+        for scene in suite['scenarios']:
+            env.reset(initial_state=scene['initial_state'])
+        output_dir.mkdir(parents=True, exist_ok=False)
+        created_output = True
+        atomic_json(output_dir / 'scenarios.json', suite)
+        atomic_json(output_dir / 'metadata.json', metadata)
+        with tf.Graph().as_default(), U.single_threaded_session() as session:
+            np.random.seed(config['seed'])
+            tf.set_random_seed(config['seed'])
+            obs = tf.placeholder(tf.float32, (None,) + env.observation_space.shape, name='observations')
+            policy = MlpPolicy('mappo_policy', env.observation_space, env.action_space,
+                               hid_size=[64], feat_size=[64], observation_input=obs)
+            action_mode = policy.pd.mode()
+            saver = tf.train.Saver(var_list=policy.get_variables())
+            for candidate in sources:
+                start = time.perf_counter()
+                saver.restore(session, candidate['checkpoint'])
+                def progress(index, count):
+                    if index % 10 == 0 or index == count:
+                        print('Validation step {}: {}/{} scenarios'.format(
+                            candidate['step'], index, count), flush=True)
+                reports = evaluate_scenarios(
+                    env, lambda observations: session.run(action_mode, {obs: observations}), suite, progress)
+                rows.append(dict(summarize(reports), step=candidate['step'],
+                                 checkpoint=candidate['checkpoint'], elapsed_seconds=time.perf_counter() - start))
+                ranked = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
+                metadata['results'] = ranked
+                atomic_json(output_dir / 'metadata.json', metadata)
+                print('Validation step {} finished: {}/{} captures'.format(
+                    candidate['step'], rows[-1]['success_count'], episodes), flush=True)
+        if select_candidate:
+            alias_snapshot['selected'] = ranked[0]['checkpoint']
+            ranked = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
+        metadata.update(status='complete', alias_snapshot=dict(alias_snapshot), results=ranked)
+        atomic_json(output_dir / 'metadata.json', metadata)
+        return {'output_dir': str(output_dir), 'rows': ranked, 'metadata': metadata}
+    except Exception as error:
+        if created_output and (output_dir / 'metadata.json').exists():
+            metadata.update(status='failed', error=str(error))
+            atomic_json(output_dir / 'metadata.json', metadata)
+        raise
+    finally:
+        env.close()
+        np.random.set_state(random_state)
+
+
+def test_all_checkpoints(run_dir, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None):
+    from deep_rl_for_swarms.common.mappo_evaluation import atomic_json
+    sources = discover_checkpoints(run_dir)
+    result = _test_sources(sources, test_seed, test_episodes, test_scenarios, output_dir,
+                           select_candidate=True)
+    leader = result['rows'][0]
+    manifest_path = sources[0]['run_dir'] / 'checkpoints.json'
+    manifest = _read_json(manifest_path) if manifest_path.exists() else {}
+    source = next(candidate for candidate in sources if candidate['checkpoint'] == leader['checkpoint'])
+    manifest['selected'] = dict(source['record'], validation_metrics=leader,
+                                validation_report=os.path.relpath(result['output_dir'], str(source['run_dir'])))
+    atomic_json(manifest_path, manifest)
+    return result
+
+
+def test_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=None,
+                    test_episodes=None, output_dir=None, artifacts=False,
+                    animation_fps=None, animation_stride=None):
+    if ((animation_fps is not None and animation_fps < 1)
+            or (animation_stride is not None and animation_stride < 1)):
+        raise ValueError('Animation fps and stride must be positive.')
+    if artifacts:
+        if test_episodes not in (None, 5) or output_dir is not None:
+            raise ValueError('--artifacts uses five scenarios and the legacy test/<step>/ output.')
+        return export_checkpoint(checkpoint, model, test_seed, test_scenarios,
+                                 animation_fps, animation_stride)
+    source = resolve_checkpoint(checkpoint, model)
+    if output_dir is None:
+        saved = source['config'].get('test', {})
+        current = saved.get('purpose') == 'checkpoint_selection'
+        episodes = test_episodes if test_episodes is not None else saved.get('episodes', 200) if current else 200
+        seed = test_seed if test_seed is not None else saved.get('seed', 30_000) if current else 30_000
+        output_dir = source['run_dir'] / 'test' / str(source['step']) / 'validation_{}_seed{}'.format(episodes, seed)
+    return _test_sources([source], test_seed, test_episodes, test_scenarios, output_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     resume = commands.add_parser('resume', help='Continue training into a new run directory.')
     test = commands.add_parser('test', help='Test a checkpoint into its run/test/<step>/ directory.')
+    batch = commands.add_parser('test-all', help='Rank every saved checkpoint on the same 200 scenarios.')
+    batch.add_argument('run_dir')
     for command in (resume, test):
         command.add_argument('checkpoint', help='Step directory, model prefix, or run directory.')
-        command.add_argument('--model', choices=['best', 'final'], default='final',
+        command.add_argument('--model', choices=['best', 'final', 'selected'], default='final',
                              help='Selection when checkpoint is a run directory (default: final).')
+    for command in (resume, test, batch):
         command.add_argument('--test-seed', type=int)
         command.add_argument('--test-scenarios')
-        command.add_argument('--animation-fps', type=int)
-        command.add_argument('--animation-stride', type=int)
+        command.add_argument('--test-episodes', type=int, help='Selection scenarios (default: 200).')
+    for command in (test, batch):
+        command.add_argument('--output-dir', help='New output directory; existing reports are protected.')
+    test.add_argument('--artifacts', action='store_true', help='Export the legacy five-scenario MP4/PNG/CSV suite.')
+    test.add_argument('--animation-fps', type=int)
+    test.add_argument('--animation-stride', type=int)
     resume.add_argument('--additional-timesteps', type=int, required=True,
                         help='Extra environment steps; 400000 + 600000 ends at 1000000.')
     resume.add_argument('--log-dir', help='Parent of new run; defaults to source run parent.')
     resume.add_argument('--note', default='', help='Free-text remark saved in config.json.')
     resume.add_argument('--seed', type=int)
-    for name in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed'):
+    for name in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed', 'checkpoint_interval'):
         resume.add_argument('--' + name.replace('_', '-'), type=int)
     for name in ('learning_rate', 'entropy_coef', 'gamma', 'lam', 'clip'):
         resume.add_argument('--' + name.replace('_', '-'), type=float)
@@ -285,7 +449,6 @@ def main():
     testing.add_argument('--test', dest='test', action='store_true')
     testing.add_argument('--no-test', dest='test', action='store_false')
     resume.set_defaults(test=None)
-    resume.add_argument('--test-model', choices=['best', 'final'])
     args = vars(parser.parse_args())
     command = args.pop('command')
     try:
@@ -293,10 +456,15 @@ def main():
             if command == 'resume':
                 run_dir = resume_training(**args)
                 print('Continuation saved to {}'.format(run_dir))
+            elif command == 'test-all':
+                result = test_all_checkpoints(**args)
+                print('Ranked {} models: {}'.format(len(result['rows']), result['output_dir']))
             else:
                 summary = test_checkpoint(**args)
-                print('Step {}: success rate {:.1%}, mean return {:.6f}'.format(
-                    summary['checkpoint']['step'], summary['success_rate'], summary['mean_episode_return']))
+                if 'rows' in summary:
+                    print('Validation report: {}'.format(summary['output_dir']))
+                else:
+                    print('Step {}: success rate {:.1%}'.format(summary['checkpoint']['step'], summary['success_rate']))
     except (ValueError, OSError, KeyError) as error:
         parser.error(str(error))
 
