@@ -12,7 +12,9 @@ import numpy as np
 def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64, epochs=5,
           eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
           test=True, test_seed=30_000, test_scenarios=None, test_episodes=200,
-          checkpoint_interval=50_000, resume=None):
+          checkpoint_interval=50_000, resume=None, test_workers=None):
+    from deep_rl_for_swarms.mappo_eval_pool import evaluation_workers
+    test_workers = evaluation_workers(test_workers)
     import tensorflow as tf
     from deep_rl_for_swarms.common import logger
     from deep_rl_for_swarms.common import tf_util as U
@@ -84,7 +86,7 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                      'episodes': test_episodes, 'seed': test_seed,
                      'scenarios_path': str(suite_path) if suite_path is not None else None,
                      'models': 'all_saved', 'max_episode_steps': 1024,
-                     'artifacts': False, 'actions': 'policy_mean'},
+                     'artifacts': False, 'actions': 'policy_mean', 'workers': test_workers},
             'checkpoint_policy': {'retained_models': ['periodic', 'monitor_best', 'final', 'resume_baseline'],
                                   'checkpoint_interval': checkpoint_interval,
                                   'selection_metric': ['success_rate', 'mean_minimum_distance', 'mean_final_distance'],
@@ -114,7 +116,7 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         if test:
             from deep_rl_for_swarms.mappo_tools import test_all_checkpoints
             result = test_all_checkpoints(log_dir, test_seed=test_seed, test_episodes=test_episodes,
-                                           test_scenarios=str(suite_path))
+                                           test_scenarios=str(suite_path), workers=test_workers)
             print('Post-training validation report: {}'.format(result['output_dir']), flush=True)
         return os.path.abspath(log_dir)
     finally:
@@ -140,11 +142,15 @@ def main():
     parser.add_argument('--test-seed', type=int, default=30_000)
     parser.add_argument('--test-episodes', type=int, default=200)
     parser.add_argument('--test-scenarios', help='Reusable JSON validation suite matching the test seed/count.')
+    parser.add_argument('--test-workers', type=int,
+                        help='Post-training CPU evaluation processes (default: up to 4); 1 runs serially.')
     parser.add_argument('--checkpoint-interval', type=int, default=50_000,
                         help='Keep checkpoints every N new training steps and at the final step.')
     parser.add_argument('--log-dir', default='runs/',
                         help='Parent directory for timestamped training runs (default: runs/).')
     args = parser.parse_args()
+    if args.test_workers is not None and args.test_workers < 1:
+        parser.error('--test-workers must be positive')
     for name in ('num_timesteps', 'rollout_steps', 'minibatch_steps', 'epochs',
                  'eval_interval', 'eval_episodes', 'test_episodes', 'checkpoint_interval'):
         if getattr(args, name) < 1:

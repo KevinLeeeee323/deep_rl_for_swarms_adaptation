@@ -174,7 +174,7 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
     options = {'seed': config['seed'], 'test': True,
                'test_seed': test_config.get('seed', 30_000) if test_config.get('purpose') == 'checkpoint_selection' else 30_000,
                'test_episodes': test_config.get('episodes', 200) if test_config.get('purpose') == 'checkpoint_selection' else 200,
-               'test_scenarios': None}
+               'test_scenarios': None, 'test_workers': test_config.get('workers')}
     for key, value in overrides.items():
         if value is None:
             continue
@@ -196,6 +196,8 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
         raise ValueError('clip must be in (0, 1) and entropy_coef must be finite and nonnegative.')
     _validate_seeds(options['seed'], training['eval_seed'], training['eval_episodes'],
                     options['test_seed'], options['test'], options['test_episodes'])
+    from deep_rl_for_swarms.mappo_eval_pool import evaluation_workers
+    options['test_workers'] = evaluation_workers(options['test_workers'])
     options['test_scenarios'] = _scenario_path(source, options['test_seed'], options['test_scenarios'],
                                              options['test_episodes'])
     parent = {'source_run_directory': str(source['run_dir']),
@@ -279,12 +281,45 @@ def discover_checkpoints(run_dir):
     return sources
 
 
-def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None,
-                  select_candidate=False):
-    from deep_rl_for_swarms.common.mappo_evaluation import (
-        CHECKPOINT_ALIASES, RANKING, atomic_json, evaluate_scenarios,
-        load_scenarios, summarize, write_ranked_csv)
+def _reusable_results(report_dir, suite, metadata, sources):
+    """Read a snapshot of complete models without modifying the source report."""
+    report_dir = Path(report_dir).expanduser().resolve()
+    previous = _read_json(report_dir / 'metadata.json')
+    if _read_json(report_dir / 'scenarios.json') != suite:
+        raise ValueError('Reused report must contain exactly the same scenarios and initial states.')
+    for key in ('purpose', 'seed', 'episodes', 'ranking', 'actions', 'max_episode_steps',
+                'capture_comparison', 'capture_radius', 'distance_geometry', 'distance_definition'):
+        # Normalize tuples in the in-memory ranking to their JSON list form.
+        if previous.get(key) != json.loads(json.dumps(metadata[key])):
+            raise ValueError('Reused report has incompatible {}.'.format(key))
+    candidates = {source['checkpoint']: source for source in sources}
+    rows = []
+    seen = set()
+    fields = ('episodes', 'success_count', 'success_rate', 'success_rate_ci95_low',
+              'success_rate_ci95_high', 'mean_minimum_distance', 'mean_final_distance',
+              'mean_episode_return', 'std_episode_return', 'mean_episode_steps',
+              'mean_capture_steps_success', 'step', 'checkpoint', 'elapsed_seconds')
+    for row in previous.get('results', []):
+        checkpoint = row.get('checkpoint')
+        if checkpoint not in candidates:
+            continue
+        if (checkpoint in seen or row.get('episodes') != metadata['episodes']
+                or row.get('step') != candidates[checkpoint]['step']
+                or checkpoint not in previous.get('checkpoints', [])):
+            raise ValueError('Invalid completed checkpoint in reused report.')
+        seen.add(checkpoint)
+        rows.append({field: row[field] for field in fields})
+    return rows, str(report_dir)
 
+
+def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None,
+                  select_candidate=False, workers=None, reuse_report=None):
+    from deep_rl_for_swarms.common.mappo_evaluation import (
+        CHECKPOINT_ALIASES, RANKING, atomic_json,
+        load_scenarios, summarize, write_ranked_csv)
+    from deep_rl_for_swarms.mappo_eval_pool import evaluation_workers, evaluate_candidates
+
+    workers = evaluation_workers(workers)
     source = sources[0]
     config = source['config']
     saved = config.get('test', {}) if config.get('test', {}).get('purpose') == 'checkpoint_selection' else {}
@@ -312,10 +347,7 @@ def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=No
     suite, suite_path = load_scenarios(config['environment_settings'], seed, episodes,
                                        _scenario_path(source, seed, test_scenarios, episodes))
 
-    import tensorflow as tf
-    from deep_rl_for_swarms.common import tf_util as U
     from deep_rl_for_swarms.ma_envs.envs.point_envs.pursuit_evasion import PursuitEvasionEnv
-    from deep_rl_for_swarms.policies.mlp_mean_embedding_policy import MlpPolicy
 
     env = PursuitEvasionEnv(**config['environment_settings'])
     random_state = np.random.get_state()
@@ -329,50 +361,57 @@ def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=No
                 'distance_definition': 'nearest pursuer to evader; minimum includes initial state; '
                                        'final is at capture or timeout; means include all scenarios',
                 'checkpoints': [candidate['checkpoint'] for candidate in sources],
-                'alias_snapshot': dict(alias_snapshot), 'results': []}
+                'alias_snapshot': dict(alias_snapshot), 'results': [],
+                'execution': {'workers': min(workers, len(sources) * episodes),
+                              'backend': 'spawn_processes' if workers > 1 else 'serial',
+                              'parallel_unit': 'checkpoint_scenario_chunks',
+                              'tensorflow_threads_per_worker': 1, 'device': 'CPU',
+                              'elapsed_seconds_definition': 'model first chunk start to last chunk end; '
+                                                            'excludes process startup and initial queue wait'}}
+    batch_start = time.perf_counter()
     try:
         for candidate in sources:
             validate_environment(candidate['config'], env)
         # Validate externally supplied initial states before creating report output.
         for scene in suite['scenarios']:
             env.reset(initial_state=scene['initial_state'])
+        if reuse_report is not None:
+            rows, reused_path = _reusable_results(reuse_report, suite, metadata, sources)
+            metadata.update(reused_report=reused_path,
+                            reused_checkpoints=[row['checkpoint'] for row in rows])
+        reused = {row['checkpoint'] for row in rows}
+        pending = [candidate for candidate in sources if candidate['checkpoint'] not in reused]
+        metadata['execution']['workers'] = min(workers, len(pending) * episodes) if pending else 0
+        active_workers = metadata['execution']['workers']
+        metadata['execution']['backend'] = ('spawn_processes' if active_workers > 1
+                                            else 'serial' if active_workers else 'reused_only')
+        print('Validation: {} models, {} scenarios/model, {} workers, {} models reused'.format(
+            len(sources), episodes, metadata['execution']['workers'], len(rows)), flush=True)
         output_dir.mkdir(parents=True, exist_ok=False)
         created_output = True
         atomic_json(output_dir / 'scenarios.json', suite)
+        if rows:
+            metadata['results'] = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
         atomic_json(output_dir / 'metadata.json', metadata)
-        with tf.Graph().as_default(), U.single_threaded_session() as session:
-            np.random.seed(config['seed'])
-            tf.set_random_seed(config['seed'])
-            obs = tf.placeholder(tf.float32, (None,) + env.observation_space.shape, name='observations')
-            policy = MlpPolicy('mappo_policy', env.observation_space, env.action_space,
-                               hid_size=[64], feat_size=[64], observation_input=obs)
-            action_mode = policy.pd.mode()
-            saver = tf.train.Saver(var_list=policy.get_variables())
-            for candidate in sources:
-                start = time.perf_counter()
-                saver.restore(session, candidate['checkpoint'])
-                def progress(index, count):
-                    if index % 10 == 0 or index == count:
-                        print('Validation step {}: {}/{} scenarios'.format(
-                            candidate['step'], index, count), flush=True)
-                reports = evaluate_scenarios(
-                    env, lambda observations: session.run(action_mode, {obs: observations}), suite, progress)
-                rows.append(dict(summarize(reports), step=candidate['step'],
-                                 checkpoint=candidate['checkpoint'], elapsed_seconds=time.perf_counter() - start))
-                ranked = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
-                metadata['results'] = ranked
-                atomic_json(output_dir / 'metadata.json', metadata)
-                print('Validation step {} finished: {}/{} captures'.format(
-                    candidate['step'], rows[-1]['success_count'], episodes), flush=True)
+        for candidate, reports, elapsed in evaluate_candidates(pending, suite, workers):
+            rows.append(dict(summarize(reports), step=candidate['step'],
+                             checkpoint=candidate['checkpoint'], elapsed_seconds=elapsed))
+            metadata['results'] = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
+            atomic_json(output_dir / 'metadata.json', metadata)
+            print('Validation step {} finished: {}/{} captures'.format(
+                candidate['step'], rows[-1]['success_count'], episodes), flush=True)
+        ranked = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
         if select_candidate:
             alias_snapshot['selected'] = ranked[0]['checkpoint']
             ranked = write_ranked_csv(output_dir / 'summary.csv', rows, alias_snapshot)
-        metadata.update(status='complete', alias_snapshot=dict(alias_snapshot), results=ranked)
+        metadata.update(status='complete', alias_snapshot=dict(alias_snapshot), results=ranked,
+                        batch_wall_seconds=time.perf_counter() - batch_start)
         atomic_json(output_dir / 'metadata.json', metadata)
         return {'output_dir': str(output_dir), 'rows': ranked, 'metadata': metadata}
-    except Exception as error:
+    except BaseException as error:
         if created_output and (output_dir / 'metadata.json').exists():
-            metadata.update(status='failed', error=str(error))
+            metadata.update(status='interrupted' if isinstance(error, KeyboardInterrupt) else 'failed',
+                            error=str(error) or type(error).__name__)
             atomic_json(output_dir / 'metadata.json', metadata)
         raise
     finally:
@@ -380,11 +419,12 @@ def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=No
         np.random.set_state(random_state)
 
 
-def test_all_checkpoints(run_dir, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None):
+def test_all_checkpoints(run_dir, test_seed=None, test_episodes=None, test_scenarios=None, output_dir=None,
+                         workers=None, reuse_report=None):
     from deep_rl_for_swarms.common.mappo_evaluation import atomic_json
     sources = discover_checkpoints(run_dir)
     result = _test_sources(sources, test_seed, test_episodes, test_scenarios, output_dir,
-                           select_candidate=True)
+                           select_candidate=True, workers=workers, reuse_report=reuse_report)
     leader = result['rows'][0]
     manifest_path = sources[0]['run_dir'] / 'checkpoints.json'
     manifest = _read_json(manifest_path) if manifest_path.exists() else {}
@@ -397,13 +437,15 @@ def test_all_checkpoints(run_dir, test_seed=None, test_episodes=None, test_scena
 
 def test_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=None,
                     test_episodes=None, output_dir=None, artifacts=False,
-                    animation_fps=None, animation_stride=None):
+                    animation_fps=None, animation_stride=None, workers=None, reuse_report=None):
     if ((animation_fps is not None and animation_fps < 1)
             or (animation_stride is not None and animation_stride < 1)):
         raise ValueError('Animation fps and stride must be positive.')
     if artifacts:
-        if test_episodes not in (None, 5) or output_dir is not None:
-            raise ValueError('--artifacts uses five scenarios and the legacy test/<step>/ output.')
+        if (test_episodes not in (None, 5) or output_dir is not None
+                or workers is not None or reuse_report is not None):
+            raise ValueError('--artifacts uses five scenarios and legacy test/<step>/ output; '
+                             '--workers and --reuse-report apply to headless validation only.')
         return export_checkpoint(checkpoint, model, test_seed, test_scenarios,
                                  animation_fps, animation_stride)
     source = resolve_checkpoint(checkpoint, model)
@@ -413,7 +455,8 @@ def test_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=No
         episodes = test_episodes if test_episodes is not None else saved.get('episodes', 200) if current else 200
         seed = test_seed if test_seed is not None else saved.get('seed', 30_000) if current else 30_000
         output_dir = source['run_dir'] / 'test' / str(source['step']) / 'validation_{}_seed{}'.format(episodes, seed)
-    return _test_sources([source], test_seed, test_episodes, test_scenarios, output_dir)
+    return _test_sources([source], test_seed, test_episodes, test_scenarios, output_dir,
+                         workers=workers, reuse_report=reuse_report)
 
 
 def main():
@@ -433,6 +476,9 @@ def main():
         command.add_argument('--test-episodes', type=int, help='Selection scenarios (default: 200).')
     for command in (test, batch):
         command.add_argument('--output-dir', help='New output directory; existing reports are protected.')
+        command.add_argument('--workers', type=int,
+                             help='Parallel CPU processes (default: up to 4); 1 runs serially.')
+        command.add_argument('--reuse-report', help='Reuse complete models from a matching report into a NEW output directory.')
     test.add_argument('--artifacts', action='store_true', help='Export the legacy five-scenario MP4/PNG/CSV suite.')
     test.add_argument('--animation-fps', type=int)
     test.add_argument('--animation-stride', type=int)
@@ -441,6 +487,7 @@ def main():
     resume.add_argument('--log-dir', help='Parent of new run; defaults to source run parent.')
     resume.add_argument('--note', default='', help='Free-text remark saved in config.json.')
     resume.add_argument('--seed', type=int)
+    resume.add_argument('--test-workers', type=int, help='Post-training evaluation processes (default: up to 4).')
     for name in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed', 'checkpoint_interval'):
         resume.add_argument('--' + name.replace('_', '-'), type=int)
     for name in ('learning_rate', 'entropy_coef', 'gamma', 'lam', 'clip'):

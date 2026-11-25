@@ -198,10 +198,12 @@ class PipelineTests(unittest.TestCase):
                     mean_minimum_distance=1., mean_final_distance=2.)):
                 run = Path(train(8, root, rollout_steps=4, minibatch_steps=4, epochs=1,
                                  eval_interval=4, checkpoint_interval=4, eval_episodes=1,
-                                 test_episodes=2, test_scenarios=str(suite_path)))
+                                 test_episodes=2, test_scenarios=str(suite_path), test_workers=2))
             report = run / 'test' / 'validation_2_seed30000'
             metadata = json.loads((report / 'metadata.json').read_text(encoding='utf-8'))
             self.assertEqual(metadata['status'], 'complete')
+            self.assertEqual(metadata['execution']['workers'], 2)
+            self.assertEqual(json.loads((run / 'config.json').read_text())['test']['workers'], 2)
             self.assertEqual(len(metadata['results']), 2)
             self.assertEqual(list(report.glob('scenario_*')), [])
             self.assertEqual(len(list(report.iterdir())), 3)
@@ -216,12 +218,12 @@ class PipelineTests(unittest.TestCase):
                 expected = ';'.join(name for name in ('best', 'selected', 'final')
                                     if (run / manifest[name]['path']).resolve() == Path(row['checkpoint']))
                 self.assertEqual(row['aliases'], expected)
-            single = test_checkpoint(run / str(chosen), test_episodes=2, test_scenarios=str(suite_path))
+            single = test_checkpoint(run / str(chosen), test_episodes=2, test_scenarios=str(suite_path), workers=1)
             for key in ('success_count', 'success_rate', 'mean_minimum_distance', 'mean_final_distance'):
                 self.assertEqual(single['rows'][0][key], metadata['results'][0][key])
             self.assertEqual(single['rows'][0]['aliases'], rows[0]['aliases'])
             unchanged = (report / 'summary.csv').read_bytes()
-            other = test_checkpoint(run / rows[1]['step'], test_episodes=2, test_scenarios=str(suite_path))
+            other = test_checkpoint(run / rows[1]['step'], test_episodes=2, test_scenarios=str(suite_path), workers=1)
             self.assertNotIn('selected', other['rows'][0]['aliases'].split(';'))
             self.assertEqual((report / 'summary.csv').read_bytes(), unchanged)
             self.assertEqual(resolve_checkpoint(run, 'selected')['step'], chosen)

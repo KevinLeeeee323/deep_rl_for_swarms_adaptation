@@ -14,6 +14,7 @@ deep_rl_for_swarms/
   run_multiagent_trpo.py           # TRPO 训练入口，默认 Rendezvous
   run_multiagent_mappo.py          # MAPPO 训练入口，默认 Pursuit-Evasion
   mappo_tools.py                   # 续训、单模型测试和 test-all 批量筛选
+  mappo_eval_pool.py               # CPU 多进程场景评测，进程独享环境与策略会话
   rl_algo/
     trpo_mpi/                     # 支持 MPI 多进程的 TRPO 算法
     mappo.py                      # MAPPO 训练、集中式 critic 和模型筛选
@@ -127,6 +128,17 @@ Default validation seeds 30,000–30,199 are separate from monitor seeds
 Use `--test-episodes`, `--test-seed`, or `--test-scenarios` to choose another
 shared suite. A validation seed range overlapping monitoring is rejected.
 
+Post-training validation uses up to four CPU processes by default (capped by
+logical CPU count). `--test-workers N` controls this for training and `resume`;
+standalone `test` and `test-all` use `--workers N`. Set N to 1 for serial execution.
+The pool splits each model's scenarios into small chunks, so both single-model
+and multi-model validation can use all workers. Each process owns an independent
+environment and single-threaded TensorFlow CPU session; GPU memory is not used.
+Original scenario order is restored before computing aggregate metrics, keeping
+the same seeds, capture rules and ranking as serial evaluation. Fixed 20-scenario
+monitoring during training still runs serially. Small suites may take longer in
+parallel because Windows must start fresh Python/TensorFlow processes.
+
 The scenario seeds, initial pursuer positions and headings, and evader positions
 are saved before training to `test_scenarios/pursuit_<settings-hash>_seed30000_200episodes.json`.
 Future runs with the same settings reuse those states. Use `--test-scenarios`
@@ -173,7 +185,11 @@ Columns include `rank`, `step`, `aliases`, `checkpoint`, `episodes`, `success_co
 and `elapsed_seconds`. Only the three stated metrics participate in ranking.
 The interval describes scenario uncertainty for a fixed policy, not variation
 across independently trained policies. CSV is updated after each model;
-`metadata.json` marks the batch as running, complete, or failed.
+`metadata.json` marks the batch as running, complete, failed, or interrupted.
+It also records the worker count and total `batch_wall_seconds`. Under parallel
+evaluation, each model's `elapsed_seconds` measures first chunk start to last
+chunk completion, excluding initial process startup/queue wait. These model times
+can overlap; sum them only for serial evaluation. Reused rows retain their old times.
 
 `aliases` joins all matching model labels with semicolons, for example
 `best;selected` or `final`; unlabeled periodic models have an empty value.
@@ -202,6 +218,12 @@ For a short smoke run:
 
 # 一键复评某个 run 保留的全部模型，默认 200 场景
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261123_122746_387474_600000steps
+
+# 指定 4 个评测进程；单模型 test 也支持 --workers
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 4
+
+# 中断旧串行评测后，复用已完成的模型，剩余模型并行评测到新目录
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 4 --reuse-report runs\20261125_090408_702662_499648steps\test\validation_200_seed30000 --output-dir runs\20261125_090408_702662_499648steps\test\validation_200_seed30000_parallel
 
 # 也可以传运行目录，用 best/final/selected 选择模型；默认 final
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps --model best
@@ -236,6 +258,14 @@ For a short smoke run:
 这两个新路径可与已有五场景结果共存。已有报告会报错保护；可先移动旧目录，
 或用 `--output-dir` 指定新目录。`test-all` 也支持该选项。
 `--test-episodes`、`--test-scenarios`、`--test-seed` 控制验证集。
+`--workers` 控制独立评测的进程数；新训练和续训用 `--test-workers`，默认最多 4 个。
+续训继承新配置中的评测进程数，可显式覆盖；旧配置没有此字段时使用默认值。
+修改代码不会让正在运行的串行评测切换到并行。需要切换时，可先在旧终端按
+Ctrl+C，然后用 `--reuse-report <旧报告目录>`、`--output-dir <新报告目录>` 继续。
+程序逐项核对场景初始状态和评测规则，复用旧 `metadata.json` 中完整评测完的模型；
+当前只完成一部分场景的模型仍需重新评测。旧 CSV/JSON 保留，所有模型完成后才
+更新 `selected`。旧版串行报告也可复用；复用要求检查点权重仍是当时的原文件。
+建议先用 4 个进程；可根据 CPU/内存占用尝试 8 个，同时运行多个批次时要合计进程数。
 `--artifacts` 则保留原来的五场景 `test/<step>/` 目录格式，才使用动画参数。
 批量完成后 `checkpoints.json` 增加 `selected` 别名；旧 `best`/`final` 含义不变。
 旧运行被移动后，工具会尝试使用运行目录内已复制的测试场景。
