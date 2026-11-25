@@ -35,9 +35,13 @@ class PursuitEvasionEnv(gym.Env, EzPickle):
                  distance_bins=8,
                  bearing_bins=8,
                  torus=True,
-                 dynamics='direct'):
+                 dynamics='direct',
+                 capture_bonus=0.0):
+        if not np.isfinite(capture_bonus) or capture_bonus < 0:
+            raise ValueError('capture_bonus must be finite and nonnegative.')
         EzPickle.__init__(self, nr_pursuers, nr_evaders, obs_mode, comm_radius, world_size, distance_bins,
-                          bearing_bins, torus, dynamics)
+                          bearing_bins, torus, dynamics, capture_bonus)
+        self.capture_bonus = float(capture_bonus)
         self.nr_agents = nr_pursuers
         self.nr_evaders = 1
         self.obs_mode = obs_mode
@@ -203,21 +207,28 @@ class PursuitEvasionEnv(gym.Env, EzPickle):
 
         rewards = self.get_reward(actions)
 
-        done = self.is_terminal
-        if rewards[0] > -self.capture_radius / self.obs_radius:
-            done = True
+        # Success depends on geometry, independently of reward scaling/bonuses.
+        nearest_distance = float(np.min(self.world.distance_matrix[-1, :-self.nr_evaders]))
+        captured = nearest_distance < self.capture_radius
+        done = captured or self.is_terminal
         # if done and self.timestep < self.timestep_limit:
         #     rewards = 100 * np.ones((self.nr_agents,))
         # info = dict()
         info = {'pursuer_states': self.world.agent_states,
                 'evader_states': self.world.landmark_states,
                 'state': np.vstack([self.world.agent_states[:, 0:2], self.world.landmark_states]),
-                'actions': actions}
+                'actions': actions, 'captured': captured,
+                'nearest_distance': nearest_distance}
 
         return next_obs, rewards, done, info
 
     def get_reward(self, actions):
-        r = -np.minimum(np.min(self.world.distance_matrix[-1, :-self.nr_evaders]), self.obs_radius) / self.obs_radius  # - 0.05 * np.sum(np.mean(actions**2, axis=1))
+        # Original reward kept for reference; capture_bonus=0 reproduces it:
+        # r = -np.minimum(np.min(self.world.distance_matrix[-1, :-self.nr_evaders]), self.obs_radius) / self.obs_radius
+        nearest_distance = np.min(self.world.distance_matrix[-1, :-self.nr_evaders])
+        r = -np.minimum(nearest_distance, self.obs_radius) / self.obs_radius
+        if nearest_distance < self.capture_radius:
+            r += self.capture_bonus
         # r = -np.minimum(np.partition(self.world.distance_matrix[-1, :-self.nr_evaders], 2)[2], self.obs_radius) / self.world_size
         # r = - 1
         # print(np.min(self.world.distance_matrix[-1, :-self.nr_evaders]))

@@ -98,7 +98,21 @@ def resolve_checkpoint(checkpoint, model='final'):
             'config': config, 'record': record}
 
 
-def validate_environment(config, env):
+def reward_settings(config=None, capture_bonus=None):
+    """Legacy configs imply no bonus; explicit overrides start a new experiment."""
+    saved = (config or {}).get('reward', {})
+    bonus = saved.get('capture_bonus', 0.0) if capture_bonus is None else capture_bonus
+    if not np.isfinite(bonus) or bonus < 0:
+        raise ValueError('capture_bonus must be finite and nonnegative.')
+    return {'version': 2 if bonus > 0 else 1,
+            'mode': 'distance_plus_capture_bonus' if bonus > 0 else 'legacy_distance',
+            'capture_bonus': float(bonus),
+            'distance_term': '-min(nearest_distance, obs_radius) / obs_radius',
+            'capture_condition': 'nearest_distance < capture_radius',
+            'team_reward': 'shared; aggregated by mean'}
+
+
+def validate_environment(config, env, allow_reward_change=False):
     """Reject changed observation/action spaces and dynamics before restoring."""
     expected = config.get('environment_runtime', {})
     actual = {'observation_shape': list(env.observation_space.shape),
@@ -114,6 +128,8 @@ def validate_environment(config, env):
     for key, value in actual.items():
         if key in expected and expected[key] != value:
             raise ValueError('Environment setting {} differs from the saved run.'.format(key))
+    if not allow_reward_change and env.capture_bonus != reward_settings(config)['capture_bonus']:
+        raise ValueError('Environment capture bonus differs from the saved run.')
 
 
 def _scenario_path(source, seed, explicit_path=None, episodes=5):
@@ -174,7 +190,7 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
     options = {'seed': config['seed'], 'test': True,
                'test_seed': test_config.get('seed', 30_000) if test_config.get('purpose') == 'checkpoint_selection' else 30_000,
                'test_episodes': test_config.get('episodes', 200) if test_config.get('purpose') == 'checkpoint_selection' else 200,
-               'test_scenarios': None, 'test_workers': test_config.get('workers')}
+               'test_scenarios': None, 'test_workers': None, 'capture_bonus': None}
     for key, value in overrides.items():
         if value is None:
             continue
@@ -198,13 +214,19 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
                     options['test_seed'], options['test'], options['test_episodes'])
     from deep_rl_for_swarms.mappo_eval_pool import evaluation_workers
     options['test_workers'] = evaluation_workers(options['test_workers'])
+    old_reward = reward_settings(config)
+    new_reward = reward_settings(config, options['capture_bonus'])
+    options['capture_bonus'] = new_reward['capture_bonus']
+    reward_changes = ({'capture_bonus': {'from': old_reward['capture_bonus'], 'to': new_reward['capture_bonus']}}
+                      if old_reward != new_reward else {})
     options['test_scenarios'] = _scenario_path(source, options['test_seed'], options['test_scenarios'],
                                              options['test_episodes'])
     parent = {'source_run_directory': str(source['run_dir']),
               'source_config': str(source['run_dir'] / 'config.json'),
               'source_checkpoint': source['checkpoint'], 'source_step': source['step']}
     history = copy.deepcopy(config.get('continuation', {}).get('history', []))
-    history.append(dict(parent, additional_timesteps=additional_timesteps, note=note))
+    history.append(dict(parent, additional_timesteps=additional_timesteps, note=note,
+                        reward_overrides=reward_changes))
     changes = {key: {'from': config['training'].get(key, 50_000), 'to': value}
                for key, value in training.items() if value != config['training'].get(key, 50_000)}
     source['training'] = training
@@ -212,7 +234,8 @@ def resume_training(checkpoint, additional_timesteps, model='final', log_dir=Non
         parent, additional_timesteps=additional_timesteps,
         target_total_timesteps=source['step'] + additional_timesteps,
         restored_components=['actor', 'central_critic', 'Adam'],
-        sampler_state_restored=False, note=note, training_overrides=changes, history=history)
+        sampler_state_restored=False, note=note, training_overrides=changes,
+        reward_overrides=reward_changes, history=history)
     runner_settings = {key: training[key] for key in (
         'rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed', 'checkpoint_interval')}
     return train(additional_timesteps, str(log_dir or source['run_dir'].parent),
@@ -247,7 +270,8 @@ def export_checkpoint(checkpoint, model='final', test_seed=None, test_scenarios=
     ffmpeg_executable()
     suite, _ = load_test_scenarios(config['environment_settings'], seed,
                                     _scenario_path(source, seed, test_scenarios))
-    env = PursuitEvasionEnv(**config['environment_settings'])
+    env = PursuitEvasionEnv(capture_bonus=reward_settings(config)['capture_bonus'],
+                            **config['environment_settings'])
     random_state = np.random.get_state()
     try:
         validate_environment(config, env)
@@ -285,6 +309,8 @@ def _reusable_results(report_dir, suite, metadata, sources):
     """Read a snapshot of complete models without modifying the source report."""
     report_dir = Path(report_dir).expanduser().resolve()
     previous = _read_json(report_dir / 'metadata.json')
+    if reward_settings({'reward': previous.get('reward', {})}) != metadata['reward']:
+        raise ValueError('Reused report has incompatible reward settings.')
     if _read_json(report_dir / 'scenarios.json') != suite:
         raise ValueError('Reused report must contain exactly the same scenarios and initial states.')
     for key in ('purpose', 'seed', 'episodes', 'ranking', 'actions', 'max_episode_steps',
@@ -296,12 +322,16 @@ def _reusable_results(report_dir, suite, metadata, sources):
     rows = []
     seen = set()
     fields = ('episodes', 'success_count', 'success_rate', 'success_rate_ci95_low',
-              'success_rate_ci95_high', 'mean_minimum_distance', 'mean_final_distance',
+              'success_rate_ci95_high', 'mean_minimum_distance', 'mean_minimum_distance_failure', 'mean_final_distance',
               'mean_episode_return', 'std_episode_return', 'mean_episode_steps',
               'mean_capture_steps_success', 'step', 'checkpoint', 'elapsed_seconds')
     for row in previous.get('results', []):
         checkpoint = row.get('checkpoint')
         if checkpoint not in candidates:
+            continue
+        if 'mean_minimum_distance_failure' not in row:
+            print('Re-evaluating step {}: reused report lacks failure-only distance.'.format(
+                candidates[checkpoint]['step']), flush=True)
             continue
         if (checkpoint in seen or row.get('episodes') != metadata['episodes']
                 or row.get('step') != candidates[checkpoint]['step']
@@ -341,6 +371,8 @@ def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=No
     for candidate in sources:
         if candidate['config']['environment_settings'] != config['environment_settings']:
             raise ValueError('All candidate checkpoints must use the same environment settings.')
+        if reward_settings(candidate['config']) != reward_settings(config):
+            raise ValueError('All candidate checkpoints must use the same reward settings.')
         training = candidate['config']['training']
         _validate_seeds(candidate['config']['seed'], training['eval_seed'], training['eval_episodes'],
                         seed, True, episodes)
@@ -349,13 +381,14 @@ def _test_sources(sources, test_seed=None, test_episodes=None, test_scenarios=No
 
     from deep_rl_for_swarms.ma_envs.envs.point_envs.pursuit_evasion import PursuitEvasionEnv
 
-    env = PursuitEvasionEnv(**config['environment_settings'])
+    env = PursuitEvasionEnv(capture_bonus=reward_settings(config)['capture_bonus'],
+                            **config['environment_settings'])
     random_state = np.random.get_state()
     rows = []
     created_output = False
     metadata = {'purpose': 'checkpoint_selection', 'status': 'running', 'seed': seed,
                 'episodes': episodes, 'scenarios_path': str(suite_path), 'ranking': RANKING,
-                'actions': 'policy_mean', 'max_episode_steps': 1024,
+                'actions': 'policy_mean', 'max_episode_steps': 1024, 'reward': reward_settings(config),
                 'capture_comparison': 'distance < capture_radius', 'capture_radius': env.capture_radius,
                 'distance_geometry': 'torus' if env.torus else 'euclidean',
                 'distance_definition': 'nearest pursuer to evader; minimum includes initial state; '
@@ -477,7 +510,7 @@ def main():
     for command in (test, batch):
         command.add_argument('--output-dir', help='New output directory; existing reports are protected.')
         command.add_argument('--workers', type=int,
-                             help='Parallel CPU processes (default: up to 4); 1 runs serially.')
+                             help='Parallel CPU processes (default: up to 8); 1 runs serially.')
         command.add_argument('--reuse-report', help='Reuse complete models from a matching report into a NEW output directory.')
     test.add_argument('--artifacts', action='store_true', help='Export the legacy five-scenario MP4/PNG/CSV suite.')
     test.add_argument('--animation-fps', type=int)
@@ -487,7 +520,9 @@ def main():
     resume.add_argument('--log-dir', help='Parent of new run; defaults to source run parent.')
     resume.add_argument('--note', default='', help='Free-text remark saved in config.json.')
     resume.add_argument('--seed', type=int)
-    resume.add_argument('--test-workers', type=int, help='Post-training evaluation processes (default: up to 4).')
+    resume.add_argument('--test-workers', type=int, help='Post-training evaluation processes (default: up to 8).')
+    resume.add_argument('--capture-bonus', type=float,
+                        help='Shared terminal capture bonus; inherited by default, 1 enables the new reward, 0 restores legacy.')
     for name in ('rollout_steps', 'minibatch_steps', 'epochs', 'eval_interval', 'eval_episodes', 'eval_seed', 'checkpoint_interval'):
         resume.add_argument('--' + name.replace('_', '-'), type=int)
     for name in ('learning_rate', 'entropy_coef', 'gamma', 'lam', 'clip'):

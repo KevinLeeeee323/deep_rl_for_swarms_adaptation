@@ -129,6 +129,9 @@ def summarize(reports):
             'success_rate_ci95_low': max(0.0, float(center - half)),
             'success_rate_ci95_high': min(1.0, float(center + half)),
             'mean_minimum_distance': float(np.mean([r['minimum_nearest_distance'] for r in reports])),
+            'mean_minimum_distance_failure': (float(np.mean([
+                r['minimum_nearest_distance'] for r in reports if not r['captured']]))
+                if successes < episodes else None),
             'mean_final_distance': float(np.mean([r['final_nearest_distance'] for r in reports])),
             'mean_episode_return': float(np.mean([r['episode_return'] for r in reports])),
             'std_episode_return': float(np.std([r['episode_return'] for r in reports])),

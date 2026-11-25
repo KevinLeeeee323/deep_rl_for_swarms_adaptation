@@ -111,12 +111,19 @@ class ParallelEvaluationTests(unittest.TestCase):
         self.assertFalse((self.root / 'must_not_exist').exists())
 
     def test_worker_counts_are_validated_and_resume_option_reaches_training(self):
-        from deep_rl_for_swarms.mappo_tools import resume_training, test_all_checkpoints
-        self.assertLessEqual(evaluation_workers(), 4)
+        from deep_rl_for_swarms.mappo_tools import resolve_checkpoint, resume_training, test_all_checkpoints
+        self.assertEqual(evaluation_workers(), min(8, os.cpu_count() or 1))
         for invalid in (0, -1, 1.5, True):
             with self.assertRaises(ValueError):
                 evaluation_workers(invalid)
-        with patch('deep_rl_for_swarms.run_multiagent_mappo.train', return_value='new_run') as train:
+        source = resolve_checkpoint(self.run_dir / '8')
+        source['config']['test']['workers'] = 1
+        with patch('deep_rl_for_swarms.mappo_tools.resolve_checkpoint', return_value=source), \
+                patch('deep_rl_for_swarms.run_multiagent_mappo.train', return_value='new_run') as train:
+            # Previous runs may record a lower worker count. New invocations use
+            # the current default unless explicitly overridden on this command.
+            resume_training(self.run_dir / '8', 4)
+            self.assertEqual(train.call_args[1]['test_workers'], evaluation_workers())
             resume_training(self.run_dir / '8', 4, test_workers=3)
             self.assertEqual(train.call_args[1]['test_workers'], 3)
         with self.assertRaises(ValueError):

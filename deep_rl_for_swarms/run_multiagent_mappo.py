@@ -12,9 +12,11 @@ import numpy as np
 def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64, epochs=5,
           eval_interval=50_000, eval_episodes=20, eval_seed=10_000,
           test=True, test_seed=30_000, test_scenarios=None, test_episodes=200,
-          checkpoint_interval=50_000, resume=None, test_workers=None):
+          checkpoint_interval=50_000, resume=None, test_workers=None, capture_bonus=None):
     from deep_rl_for_swarms.mappo_eval_pool import evaluation_workers
+    from deep_rl_for_swarms.mappo_tools import reward_settings
     test_workers = evaluation_workers(test_workers)
+    reward = reward_settings(resume['config'] if resume is not None else None, capture_bonus)
     import tensorflow as tf
     from deep_rl_for_swarms.common import logger
     from deep_rl_for_swarms.common import tf_util as U
@@ -31,10 +33,10 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
                         dynamics='unicycle')
     if resume is not None:
         env_settings = resume['config']['environment_settings'].copy()
-    env = PursuitEvasionEnv(**env_settings)
+    env = PursuitEvasionEnv(capture_bonus=reward['capture_bonus'], **env_settings)
     eval_env = None
     try:
-        eval_env = PursuitEvasionEnv(**env_settings)
+        eval_env = PursuitEvasionEnv(capture_bonus=reward['capture_bonus'], **env_settings)
         suite_path = None
         if test:
             from deep_rl_for_swarms.common.mappo_evaluation import load_scenarios
@@ -60,7 +62,7 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
             'started_at': datetime.datetime.now().astimezone().isoformat(),
             'run_directory': os.path.abspath(log_dir),
             'num_timesteps': num_timesteps, 'seed': seed,
-            'environment_settings': env_settings, 'training': algorithm_settings,
+            'environment_settings': env_settings, 'training': algorithm_settings, 'reward': reward,
             'environment_runtime': {'timestep_limit': env.timestep_limit,
                                     'capture_radius': env.capture_radius,
                                     'world_dt': env.world.dt, 'action_repeat': env.world.action_repeat,
@@ -100,7 +102,7 @@ def train(num_timesteps, log_dir, seed=0, rollout_steps=2048, minibatch_steps=64
         }
         if resume is not None:
             from deep_rl_for_swarms.mappo_tools import validate_environment
-            validate_environment(resume['config'], env)
+            validate_environment(resume['config'], env, allow_reward_change=True)
             config['continuation'] = resume['continuation']
         with open(os.path.join(log_dir, 'config.json'), 'w', encoding='utf-8') as output:
             json.dump(config, output, indent=2, allow_nan=False)
@@ -143,7 +145,9 @@ def main():
     parser.add_argument('--test-episodes', type=int, default=200)
     parser.add_argument('--test-scenarios', help='Reusable JSON validation suite matching the test seed/count.')
     parser.add_argument('--test-workers', type=int,
-                        help='Post-training CPU evaluation processes (default: up to 4); 1 runs serially.')
+                        help='Post-training CPU evaluation processes (default: up to 8); 1 runs serially.')
+    parser.add_argument('--capture-bonus', type=float, default=0.0,
+                        help='Shared bonus on true capture; 0 keeps legacy rewards, 1 adds a terminal +1.')
     parser.add_argument('--checkpoint-interval', type=int, default=50_000,
                         help='Keep checkpoints every N new training steps and at the final step.')
     parser.add_argument('--log-dir', default='runs/',
@@ -151,6 +155,8 @@ def main():
     args = parser.parse_args()
     if args.test_workers is not None and args.test_workers < 1:
         parser.error('--test-workers must be positive')
+    if not np.isfinite(args.capture_bonus) or args.capture_bonus < 0:
+        parser.error('--capture-bonus must be finite and nonnegative')
     for name in ('num_timesteps', 'rollout_steps', 'minibatch_steps', 'epochs',
                  'eval_interval', 'eval_episodes', 'test_episodes', 'checkpoint_interval'):
         if getattr(args, name) < 1:

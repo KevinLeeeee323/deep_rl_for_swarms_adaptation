@@ -13,7 +13,7 @@ import time
 
 def evaluation_workers(workers=None):
     if workers is None:
-        return min(4, os.cpu_count() or 1)
+        return min(8, os.cpu_count() or 1)
     if not isinstance(workers, int) or isinstance(workers, bool) or workers < 1:
         raise ValueError('Evaluation workers must be a positive integer.')
     if os.name == 'nt' and workers > 61:
@@ -43,7 +43,7 @@ class PolicyEvaluator:
     """One reusable policy session and one environment, owned by one process."""
 
     def __init__(self, config):
-        from deep_rl_for_swarms.mappo_tools import _scipy_dll_directory
+        from deep_rl_for_swarms.mappo_tools import _scipy_dll_directory, reward_settings
         self._dll = _scipy_dll_directory()
         self._dll.__enter__()
         self.env = None
@@ -53,7 +53,8 @@ class PolicyEvaluator:
             from deep_rl_for_swarms.ma_envs.envs.point_envs.pursuit_evasion import PursuitEvasionEnv
             from deep_rl_for_swarms.policies.mlp_mean_embedding_policy import MlpPolicy
 
-            self.env = PursuitEvasionEnv(**config['environment_settings'])
+            self.env = PursuitEvasionEnv(capture_bonus=reward_settings(config)['capture_bonus'],
+                                        **config['environment_settings'])
             self.graph = tf.Graph()
             session_config = tf.ConfigProto(intra_op_parallelism_threads=1,
                                             inter_op_parallelism_threads=1,

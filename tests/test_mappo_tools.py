@@ -47,6 +47,8 @@ class CheckpointToolsTests(unittest.TestCase):
             cls.continued = Path(resume_training(
                 cls.source / '8', 4, note='续训测试', learning_rate=1e-4, test=False))
             cls.chained = Path(resume_training(cls.continued / '12', 4, note='第二次续训', test=False))
+            cls.bonus_run = Path(resume_training(cls.source / '8', 4, capture_bonus=1., test=False))
+            cls.bonus_chained = Path(resume_training(cls.bonus_run / '12', 4, test=False))
 
     @classmethod
     def tearDownClass(cls):
@@ -105,6 +107,25 @@ class CheckpointToolsTests(unittest.TestCase):
         self.assertEqual(resolve_checkpoint(self.continued, model='best')['step'], 8)
         self.assertEqual(resolve_checkpoint(self.continued, model='final')['step'], 12)
 
+    def test_reward_override_preserves_checkpoint_and_is_inherited_by_later_runs(self):
+        config = read_json(self.bonus_run / 'config.json')
+        self.assertEqual(config['reward']['capture_bonus'], 1.)
+        self.assertEqual(config['reward']['mode'], 'distance_plus_capture_bonus')
+        self.assertEqual(config['continuation']['reward_overrides'],
+                         {'capture_bonus': {'from': 0., 'to': 1.}})
+        self.assertEqual(config['environment_settings'], read_json(self.source / 'config.json')['environment_settings'])
+        self.assertEqual(read_json(self.bonus_chained / 'config.json')['reward']['capture_bonus'], 1.)
+        original = self.tf.train.NewCheckpointReader(str(self.source / '8' / 'model'))
+        baseline = self.tf.train.NewCheckpointReader(str(self.bonus_run / '8' / 'model'))
+        final = self.tf.train.NewCheckpointReader(str(self.bonus_run / '12' / 'model'))
+        for name in original.get_variable_to_shape_map():
+            np.testing.assert_array_equal(original.get_tensor(name), baseline.get_tensor(name))
+        for group in ('mappo_policy/pol/', 'central_critic/'):
+            self.assertTrue(any(not np.array_equal(original.get_tensor(name), final.get_tensor(name))
+                                for name in original.get_variable_to_shape_map()
+                                if name.startswith(group) and '/Adam' not in name))
+        self.assertEqual(file_hashes(self.source), self.source_hashes)
+
     def test_rejects_invalid_requests_before_creating_a_run(self):
         before = set(self.root.iterdir())
         with self.assertRaises(ValueError):
@@ -113,6 +134,8 @@ class CheckpointToolsTests(unittest.TestCase):
             resume_training(self.source, 4, test=True, test_seed=10_000)
         with self.assertRaises(ValueError):
             resume_training(self.source, 4, learning_rate=float('nan'))
+        with self.assertRaises(ValueError):
+            resume_training(self.source, 4, capture_bonus=-1)
         with self.assertRaises(ValueError):
             resolve_checkpoint(self.source / '999')
         with self.assertRaises(ValueError):

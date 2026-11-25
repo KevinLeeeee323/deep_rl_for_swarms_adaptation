@@ -128,7 +128,7 @@ Default validation seeds 30,000–30,199 are separate from monitor seeds
 Use `--test-episodes`, `--test-seed`, or `--test-scenarios` to choose another
 shared suite. A validation seed range overlapping monitoring is rejected.
 
-Post-training validation uses up to four CPU processes by default (capped by
+Post-training validation uses up to eight CPU processes by default (capped by
 logical CPU count). `--test-workers N` controls this for training and `resume`;
 standalone `test` and `test-all` use `--workers N`. Set N to 1 for serial execution.
 The pool splits each model's scenarios into small chunks, so both single-model
@@ -177,9 +177,17 @@ geometry. Capture means distance strictly less than 1 after an environment step;
 capture at step 1024 counts as success. Both distance means include successes
 and failures. Minimum distance includes the initial state; final distance is
 measured at capture or timeout. It is not the time-average distance.
+`mean_minimum_distance_failure` averages the same per-scenario minimum only over
+uncaptured scenarios. It is diagnostic and does not participate in ranking.
+With no failures, its value is blank. A historical row not yet re-evaluated can
+also be blank; enrichment metadata identifies which historical rows were updated.
+Minimum distance includes reset state, while capture is checked after a step:
+an initially overlapping evader that escapes before step 1 can therefore have a
+minimum below the capture radius despite being classified as a failure.
 
 Columns include `rank`, `step`, `aliases`, `checkpoint`, `episodes`, `success_count`,
 `success_rate`, `mean_minimum_distance`, `mean_final_distance`,
+`mean_minimum_distance_failure` (only uncaptured scenarios; blank if none),
 `success_rate_ci95_low/high` (Wilson), `mean_episode_return`, `std_episode_return`,
 `mean_episode_steps`, `mean_capture_steps_success` (blank if no captures),
 and `elapsed_seconds`. Only the three stated metrics participate in ranking.
@@ -219,11 +227,11 @@ For a short smoke run:
 # 一键复评某个 run 保留的全部模型，默认 200 场景
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261123_122746_387474_600000steps
 
-# 指定 4 个评测进程；单模型 test 也支持 --workers
-.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 4
+# 指定 8 个评测进程；单模型 test 也支持 --workers
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 8
 
 # 中断旧串行评测后，复用已完成的模型，剩余模型并行评测到新目录
-.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 4 --reuse-report runs\20261125_090408_702662_499648steps\test\validation_200_seed30000 --output-dir runs\20261125_090408_702662_499648steps\test\validation_200_seed30000_parallel
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test-all runs\20261125_090408_702662_499648steps --workers 8 --reuse-report runs\20261125_090408_702662_499648steps\test\validation_200_seed30000 --output-dir runs\20261125_090408_702662_499648steps\test\validation_200_seed30000_parallel
 
 # 也可以传运行目录，用 best/final/selected 选择模型；默认 final
 .\.venv\python.exe -m deep_rl_for_swarms.mappo_tools test runs\20261123_105105_337779_400000steps --model best
@@ -236,6 +244,23 @@ For a short smoke run:
 恢复 actor、集中式 critic 和 Adam 的动量等状态，所有原有可训练参数继续更新。
 如需改变超参数，可以显式传入 `--learning-rate`、`--entropy-coef`、`--gamma`、
 `--lam`、`--clip`、`--epochs` 等；使用 `--no-test` 可跳过续训后的自动批量评测。
+`--capture-bonus 1` 在真实捕获时额外给团队共享的 +1 奖励；`--capture-bonus 0`
+恢复原距离奖励。新训练默认 0，续训默认继承来源配置的奖金，旧配置缺少该字段时按 0 处理。
+捕获终止直接使用 `nearest_distance < capture_radius`，与奖励数值无关；超时失败不发奖金。
+原距离奖励公式在环境代码注释中保留，非捕获时奖励公式不变。
+
+```powershell
+# 从当前 901760 模型追加 50 万步，捕获奖金 +1，熵系数保持 0.001
+.\.venv\python.exe -m deep_rl_for_swarms.mappo_tools resume runs\20261125_090408_702662_499648steps\901760 --additional-timesteps 500000 --entropy-coef 0.001 --capture-bonus 1 --test-workers 8 --note "从901760续训50万步，捕获奖金+1，entropy_coef=0.001"
+```
+
+这条命令累计训练至 1401760 步，在新的 run 中保存模型。`config.json` 的 `reward`
+记录奖励模式、版本及奖金，`continuation.reward_overrides` 和历史链记录奖励参数变化。
+奖励配置与场景初始状态分开保存，因此继续复用原 20/200 场景及其种子。
+训练监控、训练后自动筛选、独立评测和动画导出都使用对应 run 保存的奖励配置。
+新旧奖励下的回报数值不能直接比较；捕获率和距离指标的定义保持一致。
+复用报告时会核对奖励配置，避免混用不同奖励下的回报。
+
 旧配置缺少 `checkpoint_interval` 时补为 50000；旧五场景测试配置升级为
 200 场景/种子 30000。新协议的场景数和种子继续继承，可显式覆盖。
 `--help` 列出全部可覆盖选项。当前工具要求模型结构和环境运行参数与现有实现兼容。
@@ -258,14 +283,15 @@ For a short smoke run:
 这两个新路径可与已有五场景结果共存。已有报告会报错保护；可先移动旧目录，
 或用 `--output-dir` 指定新目录。`test-all` 也支持该选项。
 `--test-episodes`、`--test-scenarios`、`--test-seed` 控制验证集。
-`--workers` 控制独立评测的进程数；新训练和续训用 `--test-workers`，默认最多 4 个。
-续训继承新配置中的评测进程数，可显式覆盖；旧配置没有此字段时使用默认值。
+`--workers` 控制独立评测的进程数；新训练和续训用 `--test-workers`，默认最多 8 个。
+续训使用当前机器的默认评测进程数，可显式覆盖；不会继承旧配置中保存的进程数。
 修改代码不会让正在运行的串行评测切换到并行。需要切换时，可先在旧终端按
 Ctrl+C，然后用 `--reuse-report <旧报告目录>`、`--output-dir <新报告目录>` 继续。
-程序逐项核对场景初始状态和评测规则，复用旧 `metadata.json` 中完整评测完的模型；
+程序逐项核对场景初始状态和评测规则，复用旧 `metadata.json` 中完整评测完且指标齐全的模型；
 当前只完成一部分场景的模型仍需重新评测。旧 CSV/JSON 保留，所有模型完成后才
-更新 `selected`。旧版串行报告也可复用；复用要求检查点权重仍是当时的原文件。
-建议先用 4 个进程；可根据 CPU/内存占用尝试 8 个，同时运行多个批次时要合计进程数。
+更新 `selected`。旧版串行报告也可复用；缺少失败场景平均最小距离的模型会重新评测，
+因为该指标无法从已有总体均值准确推算。复用要求检查点权重仍是当时的原文件。
+本机 8 核 16 线程的短测支持使用 8 个进程；同时运行多个批次时要合计进程数。
 `--artifacts` 则保留原来的五场景 `test/<step>/` 目录格式，才使用动画参数。
 批量完成后 `checkpoints.json` 增加 `selected` 别名；旧 `best`/`final` 含义不变。
 旧运行被移动后，工具会尝试使用运行目录内已复制的测试场景。

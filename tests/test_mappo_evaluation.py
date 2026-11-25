@@ -62,6 +62,7 @@ class EvaluationMetricsTests(unittest.TestCase):
         metrics = summarize(reports)
         self.assertEqual(metrics['success_rate'], 2 / 3)
         self.assertEqual(metrics['mean_minimum_distance'], (0.5 + 0.75 + 1) / 3)
+        self.assertEqual(metrics['mean_minimum_distance_failure'], 1.)
         self.assertEqual(metrics['mean_final_distance'], (0.5 + 0.75 + 1) / 3)
         self.assertEqual(metrics['mean_capture_steps_success'], 513.)
         self.assertLess(metrics['success_rate_ci95_low'], 2 / 3)
@@ -72,6 +73,9 @@ class EvaluationMetricsTests(unittest.TestCase):
                  'episode_return': -10., 'minimum_nearest_distance': 1., 'final_nearest_distance': 2.}]
         metrics = summarize(rows)
         self.assertIsNone(metrics['mean_capture_steps_success'])
+        self.assertEqual(metrics['mean_minimum_distance_failure'], 1.)
+        success = dict(rows[0], captured=True, capture_step=5, minimum_nearest_distance=.5)
+        self.assertIsNone(summarize([success])['mean_minimum_distance_failure'])
         tied = [dict(metrics, step=step, checkpoint=str(step)) for step in (2, 1)]
         self.assertEqual([r['rank'] for r in rank_models(tied)], [1, 1])
 
@@ -198,11 +202,14 @@ class PipelineTests(unittest.TestCase):
                     mean_minimum_distance=1., mean_final_distance=2.)):
                 run = Path(train(8, root, rollout_steps=4, minibatch_steps=4, epochs=1,
                                  eval_interval=4, checkpoint_interval=4, eval_episodes=1,
-                                 test_episodes=2, test_scenarios=str(suite_path), test_workers=2))
+                                 test_episodes=2, test_scenarios=str(suite_path), test_workers=2, capture_bonus=1.))
             report = run / 'test' / 'validation_2_seed30000'
             metadata = json.loads((report / 'metadata.json').read_text(encoding='utf-8'))
             self.assertEqual(metadata['status'], 'complete')
             self.assertEqual(metadata['execution']['workers'], 2)
+            self.assertEqual(metadata['reward']['capture_bonus'], 1.)
+            self.assertTrue(all(row['mean_episode_return'] > 0. for row in metadata['results']))
+            self.assertTrue(all(row['mean_minimum_distance_failure'] is None for row in metadata['results']))
             self.assertEqual(json.loads((run / 'config.json').read_text())['test']['workers'], 2)
             self.assertEqual(len(metadata['results']), 2)
             self.assertEqual(list(report.glob('scenario_*')), [])
@@ -210,6 +217,7 @@ class PipelineTests(unittest.TestCase):
             self.assertIn(resolve_checkpoint(run, 'selected')['step'], [4, 8])
             with (report / 'summary.csv').open(encoding='utf-8-sig', newline='') as source:
                 rows = list(csv.DictReader(source))
+            self.assertTrue(all(row['mean_minimum_distance_failure'] == '' for row in rows))
             chosen = int(rows[0]['step'])
             self.assertIn('selected', rows[0]['aliases'].split(';'))
             self.assertEqual(metadata['alias_snapshot']['selected'], rows[0]['checkpoint'])
